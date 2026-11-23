@@ -27,11 +27,11 @@ teal, blue, purple, pink, black and white.
   and as glowing rings on the floor. Stand by one and **hold E** for 3 seconds.
 - When **all 5 tasks are done**, go to **room 25, the meeting room**, press **F** and pick who you think the murderer is.
 - **Right?** The innocents win!
-- **Wrong?** The person you accused is out, **plus one more random innocent**. Be careful!
+- **Wrong?** The person you accused is out, **and so are you**. Be careful!
 
 ### 🔪 The murderer
 
-- **Only the murderer can hold weapons.** Press **Q** to take your weapon out, switch, or put it away, and **click** to attack.
+- **Only the murderer can hold weapons.** **Click** to attack: your weapon comes out, and goes away again a second later. Press **Q** to switch weapons or hold one out.
 - You start with the **🔪 dagger** (up close).
 - After **2 kills** you get the **🔫 shotgun**. It shoots far, but it's LOUD: everyone hears which car the BANG came from.
 - After **4 kills** you get the **📡 tracker**: the map shows where everyone is.
@@ -56,8 +56,8 @@ Bodies stay where they fell. If you get killed, you become a ghost and can float
 | Look | Mouse (click the game first) | Drag on the right side |
 | Task | Hold **E** | Hold ✋ |
 | Accuse (in room 25) | **F** | ☝ |
-| Weapon out / switch / away | **Q** | 🔪 |
-| Attack | Click | 💥 |
+| Attack (takes your weapon out) | Click | 💥 |
+| Switch weapon / hold it out | **Q** | 🔪 |
 
 ## For grown-ups / developers
 

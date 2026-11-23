@@ -373,7 +373,7 @@
     lastTaskHtml = '';
     const mine = G.slots[G.me];
     if (G.me === G.m) {
-      big('🔪 You are the MURDERER!', `Kill everyone without getting seen. Your weapon is ready in ${GRACE} seconds. Press Q to take it out.`, 6);
+      big('🔪 You are the MURDERER!', `Kill everyone without getting seen. Your weapon is ready in ${GRACE} seconds. Click to attack!`, 6);
       $('role').className = 'm';
     } else {
       big('🙂 You are INNOCENT', 'Do your 5 tasks, then go to room 25 (the meeting room) to accuse the murderer!', 6);
@@ -436,11 +436,9 @@
       const v = r.v;
       if (by === G.m || !G.slots[v] || !A.alive[v] || v === by || A.done[by].size < NTASK || !TR.inMeeting(k.x, k.z, 0.8)) return;
       if (v === G.m) { A.over = true; emit({ t: 'acc', by, v, ok: 1 }); emit({ t: 'win', w: 'i', by }); return; }
-      A.alive[v] = false;
-      const others = G.slots.filter((s) => A.alive[s.i] && s.i !== G.m).map((s) => s.i);
-      const r2 = others.length ? pick(others) : -1;
-      if (r2 >= 0) A.alive[r2] = false;
-      emit({ t: 'acc', by, v, ok: 0, r: r2 });
+      // wrong! the innocent you accused is out, and so are you
+      A.alive[v] = false; A.alive[by] = false;
+      emit({ t: 'acc', by, v, ok: 0, r: by });
       checkWin();
     }
   }
@@ -478,7 +476,7 @@
         const outs = [ev.v].concat(ev.r >= 0 ? [ev.r] : []);
         for (const i of outs) { const s = G.slots[i]; s.alive = false; s.out = true; s.w = 0; s.mesh.visible = false; }
         msg(`☝ ${tag(ev.by)} accused ${tag(ev.v)}, but ${cname(ev.v)} was innocent! ${outs.map(tag).join(' and ')} ${outs.length > 1 ? 'are' : 'is'} off the train!`);
-        if (outs.includes(G.me)) big('🚪 You\'re out!', ev.v === G.me ? `${cname(ev.by)} accused you, but you were innocent!` : `${cname(ev.by)} accused the wrong person, and you got kicked off too!`, 5);
+        if (outs.includes(G.me)) big('🚪 You\'re out!', ev.v === G.me ? `${cname(ev.by)} accused you, but you were innocent!` : `${cname(ev.v)} was innocent, so you're off the train too!`, 5);
       }
     } else if (ev.t === 'win') {
       G.over = true;
@@ -672,7 +670,7 @@
     if (!G || document.pointerLockElement !== canvas) return;
     look(e.movementX * 0.0024, e.movementY * 0.0024);
   });
-  document.addEventListener('mousedown', (e) => { if (G && document.pointerLockElement === canvas && e.button === 0) attack(); });
+  document.addEventListener('mousedown', (e) => { if (G && e.target === canvas && e.button === 0) attack(); });
   function look(dx, dy) {
     const s = G.slots[G.me];
     s.a -= dx;
@@ -720,6 +718,8 @@
     if (!s.alive) return;
     if (now() - G.t0 < GRACE) { msg(`Your weapon is ready in ${Math.ceil(GRACE - (now() - G.t0))} seconds.`); return; }
     s.w = s.w === 0 ? 1 : s.w === 1 && s.kills >= 2 ? 2 : 0;
+    if (s.w) G.lastW = s.w;
+    G.hideAt = 0;
     SFX.swish();
   }
   // who is in front of me?
@@ -740,7 +740,12 @@
   function attack() {
     if (!G || G.over || G.me !== G.m) return;
     const s = G.slots[G.me];
-    if (!s.alive || !s.w || now() < G.cool) return;
+    if (!s.alive || now() < G.cool) return;
+    if (!s.w) { // clicking takes your weapon out and attacks straight away
+      if (now() - G.t0 < GRACE) { msg(`Your weapon is ready in ${Math.ceil(GRACE - (now() - G.t0))} seconds.`); return; }
+      s.w = G.lastW || 1;
+    }
+    G.hideAt = now() + 1; // the weapon goes away again by itself
     G.cool = now() + (s.w === 2 ? 1.0 : 0.5);
     G.swing = now();
     if (s.w === 1) {
@@ -850,7 +855,8 @@
       }
     }
 
-    // my weapon in my hand
+    // my weapon in my hand (it goes away by itself a moment after attacking)
+    if (G.hideAt && t > G.hideAt) { s.w = 0; G.hideAt = 0; }
     const swing = Math.max(0, 1 - (t - G.swing) * 5);
     for (let w = 1; w <= 2; w++) viewWeapons[w].visible = s.alive && s.w === w;
     viewWeapons[1].position.z = -0.5 - swing * 0.3;
@@ -904,7 +910,7 @@
     if (G.me === G.m) {
       const wait = GRACE - (t - G.t0);
       role = `<b>🔪 Murderer</b><br>Kills: ${s.kills}<br>` +
-        (wait > 0 ? `Weapon ready in ${Math.ceil(wait)}...` : `In hand: ${['nothing (Q)', '🔪 Dagger', '🔫 Shotgun'][s.w]}`) +
+        (wait > 0 ? `Weapon ready in ${Math.ceil(wait)}...` : `In hand: ${['nothing (click to attack)', '🔪 Dagger', '🔫 Shotgun'][s.w]}`) +
         `<br><small>${s.kills < 2 ? `🔫 Shotgun after ${2 - s.kills} more` : s.kills < 4 ? `📡 Tracker after ${4 - s.kills} more` : '📡 Tracker on!'}</small>`;
     } else role = `<b>🙂 Innocent</b><br>Tasks: ${G.myDone.size}/${NTASK}<br><small>${G.myDone.size < NTASK ? 'Then go to room 25 to accuse' : 'Go to room 25 and press F to accuse!'}</small>`;
     if (!s.alive) role = s.out ? '<b>🚪 Out</b><br>You\'re off the train. Watch the rest!' : '<b>👻 Ghost</b><br>You were killed. Watch the rest!';

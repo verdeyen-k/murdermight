@@ -147,11 +147,11 @@ h2 { margin: 0; }
         <li>The train has 7 cars: the locomotive, rooms 1-10, 11-20, 21-30, 31-40, 41-50 and the caboose.</li>
         <li>One person is secretly the <b>murderer</b>. Everyone else is <b>innocent</b>.</li>
         <li><b>Innocents:</b> do your 5 tasks. When all 5 are done, go to <b>room 25, the meeting room</b>, and <b>accuse</b> someone.
-          Right? You win! Wrong? The person you accused is out, plus one more innocent!</li>
+          Right? You win! Wrong? The person you accused is out, and so are you!</li>
         <li><b>Murderer:</b> only you can hold weapons. You start with a 🔪 dagger. After 2 kills you get the 🔫 shotgun (it's loud!).
           After 4 kills you get the 📡 tracker and can see everyone on the map. Kill all the innocents to win.
           But anyone who sees your weapon out knows it's you!</li>
-        <li><b>Keys:</b> WASD to walk, mouse to look. <b>E</b> (hold) do a task. <b>F</b> accuse (in room 25). Murderer: <b>Q</b> weapon out / switch / away, <b>click</b> to attack.</li>
+        <li><b>Keys:</b> WASD to walk, mouse to look. <b>E</b> (hold) do a task. <b>F</b> accuse (in room 25). Murderer: <b>click</b> to attack (your weapon comes out for a moment), <b>Q</b> to switch weapons or hold one out.</li>
       </ul>
     </div>
   </div>
@@ -177,7 +177,7 @@ h2 { margin: 0; }
 
 <div id="pick" class="pop" hidden><div class="card">
   <h2>☝ Who is the murderer?</h2>
-  <p class="muted" style="margin:0">If you're wrong, they're out, and so is one more innocent!</p>
+  <p class="muted" style="margin:0">If you're wrong, they're out, and so are you!</p>
   <div class="players" id="pick-btns" style="justify-content:center"></div>
   <button id="pick-cancel">Cancel</button>
 </div></div>
@@ -191,6 +191,6 @@ h2 { margin: 0; }
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="train.js?v=1"></script>
-<script src="game.js?v=1"></script>
+<script src="game.js?v=4"></script>
 </body>
 </html>
