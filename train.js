@@ -20,6 +20,7 @@
   const ROOMS = [];  // { n, car, a, b, xc }
   const TASKS = [];  // { id, kind, name, where, ox, oy, oz, sx, sz, car }
   const NODES = [];  // { i, x, z, nb: [node index] }
+  const HIDES = [];  // hiding places: { id, kind, x, z (middle), ex, ez (where you stand to get in and come out), car }
 
   const KINDS = {
     bed: 'Make the bed', lamp: 'Fix the lamp', case: 'Pack the suitcase', plant: 'Water the plant',
@@ -37,6 +38,11 @@
   // a tiny fixed random, so every computer builds the same train
   let seed = 20261122;
   const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+
+  function hide(kind, x0, x1, z0, z1, ex, ez, car) {
+    furn(x0, x1, z0, z1, 2.0, kind);
+    HIDES.push({ id: HIDES.length, kind, x: (x0 + x1) / 2, z: (z0 + z1) / 2, ex, ez, car });
+  }
 
   function task(kind, where, ox, oy, oz, sx, sz, car) {
     TASKS.push({ id: TASKS.length, kind, name: KINDS[kind], where, ox, oy, oz, sx, sz, car });
@@ -77,6 +83,7 @@
           continue;
         }
         furn(a + 0.1, a + 1.85, -CW, -1.3, 0.5, 'bed');
+        if (n % 2) hide('wardrobe', a + 0.07, a + 0.62, -0.15, 0.48, a + 0.4, -0.58, car.i); // a wardrobe in every odd room
         furn(b - 0.5, b - 0.08, -CW, -1.55, 0.7, 'table');
         const kinds = ['bed', 'lamp', 'case', 'plant', 'clock', 'window'];
         const kind = kinds[Math.floor(rnd() * kinds.length)];
@@ -93,6 +100,7 @@
       wall(x0, x0 + 6.5, -CW, 0.3);                 // the big boiler
       furn(x0 + 7.4, x0 + 9, -CW, -1.1, 0.6, 'coal');
       furn(x0 + 10.6, x0 + 11.85, -CW, -1.3, 1.0, 'panel');
+      hide('locker', x0 + 9.3, x0 + 10.2, -CW, -1.45, x0 + 9.75, -0.85, car.i);
       task('gauge', 'the locomotive', x0 + 6.52, 1.4, -0.9, x0 + 7.1, -0.5, car.i);
       task('coal', 'the locomotive', x0 + 8.2, 0.6, -1.4, x0 + 8.2, -0.5, car.i);
       task('whistle', 'the locomotive', x0 + 11.2, 2.2, 1.6, x0 + 10.6, 1.2, car.i);
@@ -101,6 +109,8 @@
       furn(x0 + 3, x0 + 5, -CW, -1.3, 0.8, 'desk');
       furn(x0 + 8.3, x0 + 9.85, -CW, -1.2, 0.9, 'stove');
       furn(x0 + 6.5, x0 + 9.85, 1.2, CW, 0.5, 'bunk');
+      hide('locker', x0 + 1.0, x0 + 1.9, -CW, -1.45, x0 + 1.45, -0.85, car.i);
+      hide('locker', x0 + 5.5, x0 + 6.4, -CW, -1.45, x0 + 5.95, -0.85, car.i);
       task('mail', 'the caboose', x0 + 4, 0.8, -1.65, x0 + 4, -0.8, car.i);
       task('stove', 'the caboose', x0 + 9, 0.9, -1.6, x0 + 8.4, -0.6, car.i);
       task('brake', 'the caboose', x0 + 9.8, 1.1, 0.3, x0 + 9.2, 0.3, car.i);
@@ -215,7 +225,7 @@
   const SPAWNS = NODES.filter((n) => n.z === DOORZ && CARS[carAt(n.x).i].kind === 'pass');
 
   const api = {
-    CW, T, GAP, CORR, DOOR0, DOOR1, DOORZ, R, CARS, SIGHT, SOLID, FURN, ROOMS, TASKS, NODES, SPAWNS, KINDS, LENGTH: CARS[LAST].x1,
+    CW, T, GAP, CORR, DOOR0, DOOR1, DOORZ, R, CARS, SIGHT, SOLID, FURN, ROOMS, TASKS, NODES, HIDES, SPAWNS, KINDS, LENGTH: CARS[LAST].x1,
     MEETING, MEETING_N, los, clearPath, blocked, move, carAt, placeName, findPath, nearestNode, inMeeting,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

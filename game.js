@@ -237,6 +237,15 @@
       } else if (f.kind === 'bunk') {
         boxAt(scene, w, 0.25, d, cx, f.h - 0.12, cz, '#5a3a22');
         boxAt(scene, w - 0.05, 0.12, d - 0.05, cx, f.h + 0.06, cz, '#b0a080');
+      } else if (f.kind === 'wardrobe' || f.kind === 'locker') {
+        const wood = f.kind === 'wardrobe';
+        boxAt(scene, w, f.h, d, cx, f.h / 2, cz, wood ? '#6a3e1e' : '#4a5a6a');
+        boxAt(scene, w + 0.04, 0.06, d + 0.04, cx, f.h, cz, wood ? '#4a2a12' : '#333');
+        // the doors face the room (wardrobes) or the aisle (lockers): -z for wardrobes, +z for lockers
+        const fz = wood ? f.z0 - 0.01 : f.z1 + 0.01;
+        boxAt(scene, 0.015, f.h - 0.2, 0.02, cx, f.h / 2, fz, '#2a1a0a');
+        for (const kx of [-0.06, 0.06]) ball(scene, 0.025, cx + kx, 1.0, fz, '#e8c040');
+        if (!wood) for (let y = 1.5; y < 1.8; y += 0.08) boxAt(scene, w - 0.2, 0.02, 0.02, cx, y, fz, '#222');
       } else boxAt(scene, w, f.h, d, cx, f.h / 2, cz, '#777');
     }
     // the front of the locomotive: a fire door on the boiler
@@ -355,7 +364,7 @@
       slots: def.slots.map((d, i) => ({
         i, c: d.c, o: d.o || '', tasks: def.tasks[i], alive: true, out: false,
         x: def.spawn[i][0], z: def.spawn[i][1], a: Math.random() * Math.PI * 2, w: 0, kills: 0,
-        tx: def.spawn[i][0], tz: def.spawn[i][1], ta: 0, ai: null, mesh: null,
+        tx: def.spawn[i][0], tz: def.spawn[i][1], ta: 0, ai: null, mesh: null, hide: -1,
       })),
     };
     for (const s of G.slots) { s.ta = s.a; s.mesh = makePerson(COLORS[s.c].h); }
@@ -381,6 +390,7 @@
     }
     $('t-weap').hidden = $('t-hit').hidden = G.me !== G.m;
     $('t-acc').hidden = G.me === G.m;
+    $('hiding').hidden = true;
     camera.position.set(mine.x, EYE, mine.z);
     audio();
     SFX.whistle();
@@ -420,8 +430,10 @@
     if (r.t === 'kill') {
       const w = r.w === 2 ? 2 : 1, v = r.v, s = G.slots[v];
       if (by !== G.m || (w === 2 && A.kills < 2) || t - A.start < GRACE - 1) return;
-      const ok = s && v !== by && A.alive[v] && t - A.last > 0.4 &&
-        dist(k, s) <= (w === 2 ? SHOTGUN + 1.5 : DAGGER + 1.2) && (w === 1 || TR.los(k.x, k.z, s.x, s.z));
+      const spot = s && s.hide >= 0 ? TR.HIDES[s.hide] : null;
+      const ok = s && v !== by && A.alive[v] && t - A.last > 0.4 && (spot
+        ? w === 1 && Math.hypot(k.x - spot.x, k.z - spot.z) <= 2.2 // someone hiding: only the dagger, right at the hiding place
+        : dist(k, s) <= (w === 2 ? SHOTGUN + 1.5 : DAGGER + 1.2) && (w === 1 || TR.los(k.x, k.z, s.x, s.z)));
       if (!ok) { if (w === 2) emit({ t: 'bang', by }); return; }
       A.alive[v] = false; A.kills++; A.last = t;
       emit({ t: 'kill', by, v, w, x: +s.x.toFixed(2), z: +s.z.toFixed(2) });
@@ -453,7 +465,8 @@
     const me = G.slots[G.me];
     if (ev.t === 'kill') {
       const v = G.slots[ev.v], k = G.slots[ev.by];
-      v.alive = false; v.x = v.tx = ev.x; v.z = v.tz = ev.z; v.w = 0;
+      v.alive = false; v.x = v.tx = ev.x; v.z = v.tz = ev.z; v.w = 0; v.hide = -1;
+      if (ev.v === G.me) $('hiding').hidden = true;
       k.kills++;
       G.bodies.push({ slot: ev.v, x: ev.x, z: ev.z });
       layBody(v);
@@ -523,7 +536,9 @@
     };
   }
   function goTo(s, x, z) { s.ai.path = TR.findPath(s.x, s.z, x, z); s.ai.goal = [x, z]; s.ai.stuckT = 0; }
-  function sees(s, o, r) { return dist(s, o) < r && TR.los(s.x, s.z, o.x, o.z); }
+  function sees(s, o, r) { return !(o.hide >= 0) && dist(s, o) < r && TR.los(s.x, s.z, o.x, o.z); }
+  const spotFree = (id) => !G.slots.some((o) => o.hide === id && o.alive);
+  function botHide(s, id) { const h = TR.HIDES[id]; s.x = h.ex; s.z = h.ez; s.hide = id; s.ai.path = []; s.w = 0; }
 
   function updateBot(s, dt, t) {
     const ai = s.ai;
@@ -554,6 +569,16 @@
 
   function thinkInnocent(s, t) {
     const ai = s.ai, M = G.slots[G.m], mAlive = A.alive[G.m];
+    if (s.hide >= 0) { // hiding: stay in until it feels safe
+      if (t > ai.until && !(mAlive && M.hide < 0 && dist(s, M) < 6 && TR.los(s.x, s.z, M.x, M.z))) { s.hide = -1; ai.mode = ''; }
+      return;
+    }
+    if (ai.mode === 'hide') { // on the way to a hiding place
+      const h = TR.HIDES[ai.spot];
+      if (!spotFree(ai.spot)) ai.mode = '';
+      else if (Math.hypot(s.x - h.ex, s.z - h.ez) < 0.5) { botHide(s, ai.spot); ai.until = t + rand(8, 16); return; }
+      else { if (!ai.path.length) goTo(s, h.ex, h.ez); return; }
+    }
     if (mAlive && M.w > 0 && sees(s, M, 18)) { ai.known = true; ai.sus = G.m; }
     for (const b of G.bodies) {
       if (ai.seen.has(b.slot) || !sees(s, b, 10)) continue;
@@ -580,6 +605,9 @@
     if (ai.known && mAlive && sees(s, M, 7) && !(done && TR.inMeeting(s.x, s.z))) {
       if (ai.mode !== 'flee' || t > ai.until || !ai.path.length) {
         ai.mode = 'flee'; ai.until = t + 3; ai.doing = 0;
+        // a hiding place close by? jump in!
+        const spot = TR.HIDES.filter((h) => spotFree(h.id) && Math.hypot(h.ex - s.x, h.ez - s.z) < 7 && Math.hypot(h.ex - M.x, h.ez - M.z) > Math.hypot(h.ex - s.x, h.ez - s.z))[0];
+        if (spot && Math.random() < 0.6) { ai.mode = 'hide'; ai.spot = spot.id; goTo(s, spot.ex, spot.ez); return; }
         const far = TR.SPAWNS.filter((n) => Math.abs(n.x - M.x) > 15 && Math.sign(n.x - s.x) === Math.sign(s.x - M.x || 1));
         const n = pick(far.length ? far : TR.SPAWNS);
         goTo(s, n.x, n.z);
@@ -630,10 +658,18 @@
       return;
     }
     const tracker = A.kills >= 4;
+    ai.lastSeen = ai.lastSeen || {};
+    for (const o of others(s.i, -1)) if (sees(s, o, 16)) ai.lastSeen[o.i] = t;
+    // the target jumped into a hiding place right in front of us? we know where they are
+    if (ai.target >= 0 && A.alive[ai.target] && G.slots[ai.target].hide >= 0) {
+      if (ai.spot == null) ai.spot = t - (ai.lastSeen[ai.target] || -99) < 1.5 ? G.slots[ai.target].hide : -1;
+      if (ai.spot < 0 || G.slots[ai.target].hide !== ai.spot) { ai.target = -1; ai.spot = null; }
+    } else ai.spot = null;
     if (ai.target < 0 || !A.alive[ai.target] || t > ai.targetT) {
       let best = -1, score = 1e9;
       for (const o of others(s.i, -1)) {
         const d = dist(s, o);
+        if (o.hide >= 0) continue; // can't find people who are hiding
         if (!tracker && d > 9 && !sees(s, o, 16)) continue;
         const sc = d + others(s.i, o.i).filter((q) => sees(q, o, 14)).length * 15;
         if (sc < score) { score = sc; best = o.i; }
@@ -644,6 +680,17 @@
     ai.mode = 'hunt';
     const v = G.slots[ai.target], d = dist(s, v), see = TR.los(s.x, s.z, v.x, v.z);
     const wit = witnesses(ai.target);
+    if (ai.spot != null && ai.spot >= 0) { // go stab the hiding place
+      const h = TR.HIDES[ai.spot];
+      if (Math.hypot(s.x - h.x, s.z - h.z) < 1.5 && wit === 0) {
+        ai.path = []; s.a = faceTo(s, h.x, h.z);
+        if (s.w !== 1) { s.w = 1; ai.drawT = t; ai.hideAt = 0; }
+        else if (t - ai.drawT > 0.35) { handleReq({ t: 'kill', by: s.i, v: ai.target, w: 1 }); ai.cool = t + rand(10, 18); ai.hideAt = t + 0.9; ai.target = -1; ai.spot = null; }
+        return;
+      }
+      if (t > ai.repath || !ai.path.length) { goTo(s, h.ex, h.ez); ai.repath = t + 0.7; }
+      return;
+    }
     const want = A.kills >= 2 && d > 2.2 ? 2 : 1;
     const range = want === 2 ? 9 : 1.6;
     if (wit === 0 && see && d < range) {
@@ -670,7 +717,11 @@
     if (!G || document.pointerLockElement !== canvas) return;
     look(e.movementX * 0.0024, e.movementY * 0.0024);
   });
-  document.addEventListener('mousedown', (e) => { if (G && e.target === canvas && e.button === 0) attack(); });
+  document.addEventListener('mousedown', (e) => {
+    if (!G || e.target !== canvas || e.button !== 0) return;
+    if (G.me === G.m) attack();
+    else if (G.slots[G.me].hide >= 0 || nearSpot()) toggleHide(); // innocents: click a wardrobe to hide in it
+  });
   function look(dx, dy) {
     const s = G.slots[G.me];
     s.a -= dx;
@@ -682,6 +733,7 @@
     keys[e.code] = true;
     if (e.code === 'KeyQ') cycleWeapon();
     if (e.code === 'KeyF') openAccuse();
+    if (e.code === 'KeyH') toggleHide();
     if (e.code === 'Escape') $('pick').hidden = true;
   });
   document.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -710,6 +762,7 @@
     $('t-acc').addEventListener('click', openAccuse);
     $('t-weap').addEventListener('click', cycleWeapon);
     $('t-hit').addEventListener('click', attack);
+    $('t-hide').addEventListener('click', toggleHide);
   })();
 
   function cycleWeapon() {
@@ -727,7 +780,7 @@
     const s = G.slots[G.me];
     let best = -1, bd = 1e9;
     for (const o of G.slots) {
-      if (o.i === G.me || !o.alive) continue;
+      if (o.i === G.me || !o.alive || o.hide >= 0) continue;
       const d = dist(s, o);
       if (d > range) continue;
       const diff = angDiff(faceTo(s, o.x, o.z), s.a);
@@ -740,7 +793,7 @@
   function attack() {
     if (!G || G.over || G.me !== G.m) return;
     const s = G.slots[G.me];
-    if (!s.alive || now() < G.cool) return;
+    if (!s.alive || now() < G.cool || s.hide >= 0) return;
     if (!s.w) { // clicking takes your weapon out and attacks straight away
       if (now() - G.t0 < GRACE) { msg(`Your weapon is ready in ${Math.ceil(GRACE - (now() - G.t0))} seconds.`); return; }
       s.w = G.lastW || 1;
@@ -750,17 +803,49 @@
     G.swing = now();
     if (s.w === 1) {
       SFX.swish();
-      const v = aimAt(DAGGER + 0.3, 0.5);
+      let v = aimAt(DAGGER + 0.3, 0.5);
+      if (v < 0) { // stab a hiding place: whoever is inside gets it
+        const h = spotInFront();
+        if (h) v = G.slots.findIndex((o) => o.alive && o.hide === h.id);
+      }
       if (v >= 0) request({ t: 'kill', by: G.me, v, w: 1 });
     } else {
       const v = aimAt(SHOTGUN, 0.12);
       request({ t: 'kill', by: G.me, v, w: 2 });
     }
   }
+  // the hiding place I'm standing at and looking at
+  function spotInFront() {
+    const s = G.slots[G.me];
+    for (const h of TR.HIDES) {
+      const d = Math.hypot(s.x - h.x, s.z - h.z);
+      if (d < 1.6 && angDiff(faceTo(s, h.x, h.z), s.a) < 0.9) return h;
+    }
+    return null;
+  }
+  function nearSpot() {
+    const s = G.slots[G.me];
+    for (const h of TR.HIDES) if (Math.hypot(s.x - h.ex, s.z - h.ez) < 0.9 || Math.hypot(s.x - h.x, s.z - h.z) < 1.1) return h;
+    return null;
+  }
+  function toggleHide() {
+    if (!G || G.over) return;
+    const s = G.slots[G.me];
+    if (!s.alive) return;
+    if (s.hide >= 0) { s.hide = -1; $('hiding').hidden = true; SFX.swish(); return; }
+    const h = nearSpot();
+    if (!h) { msg('Find a wardrobe or a locker to hide in!'); return; }
+    if (G.slots.some((o) => o.alive && o.hide === h.id)) { msg('Someone is already hiding in there!'); return; }
+    s.x = h.ex; s.z = h.ez; s.hide = h.id; s.w = 0; G.hold = 0;
+    s.a = faceTo(h, h.ex, h.ez); // look out of the door
+    $('hiding').innerHTML = `🙈 You're hiding in the ${h.kind}. Nobody can see you!<br><small>${isTouch ? '🚪' : 'Click or H'} to come out</small>`;
+    $('hiding').hidden = false;
+    SFX.swish();
+  }
   function openAccuse() {
     if (!G || G.over || G.me === G.m) return;
     const s = G.slots[G.me];
-    if (!s.alive) return;
+    if (!s.alive || s.hide >= 0) return;
     if (G.myDone.size < NTASK) { msg(`Finish all your tasks first! (${G.myDone.size}/${NTASK})`); return; }
     if (!TR.inMeeting(s.x, s.z)) { msg('Go to <b>room 25, the meeting room</b>, to accuse someone.'); return; }
     if (document.pointerLockElement) document.exitPointerLock();
@@ -814,7 +899,7 @@
     if (len > 1) { f /= len; r /= len; }
     const sp = (s.alive ? SPEED : GHOST_SPEED) * dt;
     const dx = (-Math.sin(s.a) * f + Math.cos(s.a) * r) * sp, dz = (-Math.cos(s.a) * f - Math.sin(s.a) * r) * sp;
-    if (s.alive && !G.over) TR.move(s, dx, dz);
+    if (s.alive && !G.over && s.hide < 0) TR.move(s, dx, dz);
     else if (!s.alive) { // ghosts float through walls
       s.x = Math.max(-1, Math.min(TR.LENGTH + 1, s.x + dx));
       s.z = Math.max(-1.9, Math.min(1.9, s.z + dz));
@@ -823,11 +908,12 @@
     G.bob = (G.bob || 0) + (moving ? dt * 9 : 0);
     const sway = Math.sin(t * 1.7) * 0.004;
     camera.position.set(s.x, (s.alive ? EYE : 1.9) + Math.sin(G.bob) * 0.04, s.z);
+    if (s.hide >= 0) { const h = TR.HIDES[s.hide]; camera.position.set(h.x + (h.ex - h.x) * 0.55, EYE, h.z + (h.ez - h.z) * 0.55); }
     camera.rotation.set(pitch, s.a, sway);
 
     // tasks
     G.near = -1;
-    if (s.alive && !G.over) {
+    if (s.alive && !G.over && s.hide < 0) {
       for (const id of s.tasks) {
         if (G.myDone.has(id)) continue;
         const tk = TR.TASKS[id];
@@ -868,7 +954,7 @@
       const m = s.mesh;
       if (s.out) { m.visible = false; continue; }
       if (!s.alive) continue; // bodies stay where they fell
-      m.visible = s.i !== G.me;
+      m.visible = s.i !== G.me && !(s.hide >= 0);
       m.position.set(s.x, 0, s.z);
       m.rotation.y = s.a;
       const mv = Math.hypot(s.x - (s.px ?? s.x), s.z - (s.pz ?? s.z)) > 0.004;
@@ -922,10 +1008,15 @@
     // prompt and progress bar
     let p = '';
     if (s.alive && !G.over) {
+      if (s.hide < 0 && nearSpot()) p = `${isTouch ? '🚪' : G.me === G.m ? 'H' : 'Click'}: hide in the ${nearSpot().kind}`;
       if (G.near >= 0) p = `${isTouch ? 'Hold ✋' : 'Hold E'}: ${TR.TASKS[G.near].name}`;
+      if (s.hide >= 0) p = '';
       if (G.me === G.m && s.w) {
         const v = s.w === 1 ? aimAt(DAGGER + 0.3, 0.5) : aimAt(SHOTGUN, 0.12);
         if (v >= 0) p = `${isTouch ? '💥' : 'Click'}: attack ${COLORS[G.slots[v].c].n}`;
+        else if (s.w === 1 && spotInFront()) p = `${isTouch ? '💥' : 'Click'}: stab the ${spotInFront().kind}`;
+      } else if (G.me === G.m && s.hide < 0 && spotInFront() && !(G.near >= 0)) {
+        p = `${isTouch ? '💥' : 'Click'}: stab the ${spotInFront().kind}` + (nearSpot() ? ` · ${isTouch ? '🚪' : 'H'}: hide` : '');
       }
       if (G.me !== G.m && TR.inMeeting(s.x, s.z)) p = G.myDone.size >= NTASK ? `${isTouch ? '☝ Accuse' : 'Press F'} to accuse someone!` : `Finish your tasks to accuse (${G.myDone.size}/${NTASK})`;
     }
@@ -959,7 +1050,7 @@
     }
     const all = !s.alive || (G.me === G.m && s.kills >= 4);
     for (const o of G.slots) {
-      if (o.out || o.i === G.me) continue;
+      if (o.out || o.i === G.me || (o.alive && o.hide >= 0)) continue;
       if (!o.alive && (G.seenBodies.has(o.i) || all)) { g.fillStyle = '#fff'; g.fillText('✖', X(o.x), Z(o.z) + 3); continue; }
       if (!o.alive || !all) continue;
       g.fillStyle = COLORS[o.c].h; g.strokeStyle = '#000'; g.lineWidth = 1;
@@ -1108,7 +1199,8 @@
       if (!G) return;
       const s = G.slots[+snap.key], p = snap.val();
       if (!s || s.i === G.me || s.ai || !p) return;
-      s.tx = p.x; s.tz = p.z; s.ta = p.a; s.w = p.w || 0;
+      s.tx = p.x; s.tz = p.z; s.ta = p.a; s.w = p.w || 0; s.hide = p.h == null ? -1 : p.h;
+      if (s.hide >= 0) { s.x = s.tx; s.z = s.tz; }
     };
     on(ref.child('pos'), 'child_added', posFn);
     on(ref.child('pos'), 'child_changed', posFn);
@@ -1120,7 +1212,7 @@
     if (t - G.lastSend < 0.1) return;
     G.lastSend = t;
     const up = {};
-    const put = (s) => { up[s.i] = { x: +s.x.toFixed(2), z: +s.z.toFixed(2), a: +s.a.toFixed(2), w: s.w }; };
+    const put = (s) => { up[s.i] = { x: +s.x.toFixed(2), z: +s.z.toFixed(2), a: +s.a.toFixed(2), w: s.w, h: s.hide }; };
     put(G.slots[G.me]);
     if (G.host) for (const s of G.slots) if (s.ai) put(s);
     room.ref.child('pos').update(up);

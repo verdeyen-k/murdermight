@@ -70,6 +70,8 @@ h2 { margin: 0; }
 #big { position: absolute; left: 50%; top: 32%; transform: translate(-50%, -50%); text-align: center; font-size: clamp(28px, 6vw, 52px); font-weight: 700; text-shadow: 0 4px 0 #000; }
 #big small { display: block; font-size: .45em; font-weight: 600; }
 #click { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); background: #000b; padding: 8px 16px; border-radius: 12px; font-weight: 600; }
+#hiding { position: absolute; inset: 0; box-shadow: inset 0 0 0 9999px #0000, inset 0 0 22vmin 12vmin #000e; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 18vh; font-weight: 700; font-size: 22px; text-align: center; text-shadow: 0 2px 0 #000; background: repeating-linear-gradient(0deg, #0000 0 34px, #1a0e0688 34px 44px); }
+#hiding small { font-size: 15px; }
 #flash { position: absolute; inset: 0; background: #ff000055; opacity: 0; transition: opacity .4s; }
 #quit { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); pointer-events: auto; padding: 4px 10px; font-size: 14px; opacity: .7; margin-top: 22px; }
 
@@ -101,6 +103,7 @@ h2 { margin: 0; }
   <div id="msgs"></div>
   <div id="big"></div>
   <div id="click" hidden>Click to look around</div>
+  <div id="hiding" hidden></div>
   <div id="flash"></div>
   <button id="quit">◀ Menu</button>
 </div>
@@ -113,6 +116,7 @@ h2 { margin: 0; }
     <button id="t-acc">☝ Accuse</button>
     <button id="t-weap">🔪 Weapon</button>
     <button id="t-hit">💥 Attack</button>
+    <button id="t-hide">🚪 Hide</button>
   </div>
 </div>
 
@@ -151,6 +155,8 @@ h2 { margin: 0; }
         <li><b>Murderer:</b> only you can hold weapons. You start with a 🔪 dagger. After 2 kills you get the 🔫 shotgun (it's loud!).
           After 4 kills you get the 📡 tracker and can see everyone on the map. Kill all the innocents to win.
           But anyone who sees your weapon out knows it's you!</li>
+        <li><b>Hiding:</b> wardrobes and lockers are all over the train. Click it (or press <b>H</b>) to hide inside. Nobody can see you, and you're not on the tracker...
+          but if the murderer stabs your hiding place, you're done!</li>
         <li><b>Keys:</b> WASD to walk, mouse to look. <b>E</b> (hold) do a task. <b>F</b> accuse (in room 25). Murderer: <b>click</b> to attack (your weapon comes out for a moment), <b>Q</b> to switch weapons or hold one out.</li>
       </ul>
     </div>
@@ -190,7 +196,7 @@ h2 { margin: 0; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-<script src="train.js?v=1"></script>
-<script src="game.js?v=4"></script>
+<script src="train.js?v=2"></script>
+<script src="game.js?v=6"></script>
 </body>
 </html>

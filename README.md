@@ -39,6 +39,13 @@ teal, blue, purple, pink, black and white.
 - You get 5 **fake tasks** so you can pretend to be innocent.
 - Kill every innocent to win.
 
+### 🙈 Hiding
+
+Wardrobes (in every odd-numbered room) and lockers (in the locomotive and the caboose) are hiding places. Walk up to one and
+**click** it (or press **H**) to hide inside, and click again to come out. (The murderer uses **H**, because clicking stabs.) While you're hiding, **nobody can see you** and you **don't show up
+on the murderer's tracker**. But if the murderer walks right up to your hiding place and stabs it with the dagger, you're done!
+(The shotgun can't hit hiding places.) Only one person fits in each hiding place. Bots hide too when they're running from the murderer.
+
 Bodies stay where they fell. If you get killed, you become a ghost and can float through walls to watch.
 
 ## Ways to play
@@ -58,6 +65,7 @@ Bodies stay where they fell. If you get killed, you become a ghost and can float
 | Accuse (in room 25) | **F** | ☝ |
 | Attack (takes your weapon out) | Click | 💥 |
 | Switch weapon / hold it out | **Q** | 🔪 |
+| Hide / come out | Click a wardrobe or locker (or **H**) | 🚪 |
 
 ## For grown-ups / developers
 
