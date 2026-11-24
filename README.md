@@ -1,8 +1,8 @@
-# 🚂 Murder Might
+# 🔪 Murder Might
 
-Someone on this train is a murderer... and it might be anyone!
+Someone here is a murderer... and it might be anyone! There are two maps: the train and the mansion.
 
-## The train
+## 🚂 The train
 
 The train has 7 cars:
 
@@ -16,6 +16,19 @@ The train has 7 cars:
 
 Each room car has a long corridor down one side, with doors into the rooms. Every room except the meeting room has one task in it.
 
+## 🏰 The mansion
+
+A big house with 2 floors and 3 rooms on each floor:
+
+| Upstairs | Bedroom | Bathroom | **Study** (the meeting room) |
+|---|---|---|---|
+| **Downstairs** | **Kitchen** | **Dining room** | **Living room** |
+
+A hallway runs along the front of each floor, and the **stairs** are at the end of the hallway (by the living room
+downstairs, by the study upstairs). Rooms next to each other have doors between them. Each room (except the study) has 4 tasks,
+and each hallway has one. Hiding places: the pantry, the china cabinet, the living room closet, the bedroom wardrobe,
+the shower, and a closet at the end of each hallway. People on different floors can't see each other!
+
 ## How to play
 
 One person is secretly the **murderer**. Everyone else is **innocent**. Up to 10 people play: red, orange, yellow, green,
@@ -25,7 +38,7 @@ teal, blue, purple, pink, black and white.
 
 - You get **5 tasks**, like "Fix the lamp: room 27". They show up in your task list, as yellow dots on the train map,
   and as glowing rings on the floor. Stand by one and **hold E** for 3 seconds.
-- When **all 5 tasks are done**, go to **room 25, the meeting room**, press **F** and pick who you think the murderer is.
+- When **all 5 tasks are done**, go to the **meeting room** (room 25 on the train, the study in the mansion), press **F** and pick who you think the murderer is.
 - **Right?** The innocents win!
 - **Wrong?** The person you accused is out, **and so are you**. Be careful!
 
@@ -41,7 +54,7 @@ teal, blue, purple, pink, black and white.
 
 ### 🙈 Hiding
 
-Wardrobes (in every odd-numbered room) and lockers (in the locomotive and the caboose) are hiding places. Walk up to one and
+On the train, wardrobes (in every odd-numbered room) and lockers (in the locomotive and the caboose) are hiding places. The mansion has its own (see above). Walk up to one and
 **click** it (or press **H**) to hide inside, and click again to come out. (The murderer uses **H**, because clicking stabs.) While you're hiding, **nobody can see you** and you **don't show up
 on the murderer's tracker**. But if the murderer walks right up to your hiding place and stabs it with the dagger, you're done!
 (The shotgun can't hit hiding places.) Only one person fits in each hiding place. Bots hide too when they're running from the murderer.
@@ -50,10 +63,10 @@ Bodies stay where they fell. If you get killed, you become a ghost and can float
 
 ## Ways to play
 
-- **🤖 With bots**: pick how many people are on the train (4 to 10), your colour, and whether you want to be the murderer
+- **🤖 With bots**: pick the map, how many people play (4 to 10), your colour, and whether you want to be the murderer
   (Random, Me!, or Not me). The bots do tasks, find bodies, run from the murderer and accuse people (sometimes the wrong person!).
 - **🌐 Online**: one person presses **Make a room** and tells friends the 4-letter code. Everyone picks a colour,
-  the host picks how many people are on the train (bots fill the empty spots), and presses **GO!**
+  the host picks the map and how many people play (bots fill the empty spots), and presses **GO!**
 
 ## Controls
 
@@ -62,7 +75,7 @@ Bodies stay where they fell. If you get killed, you become a ghost and can float
 | Walk | WASD or arrows | Joystick |
 | Look | Mouse (click the game first) | Drag on the right side |
 | Task | Hold **E** | Hold ✋ |
-| Accuse (in room 25) | **F** | ☝ |
+| Accuse (in the meeting room) | **F** | ☝ |
 | Attack (takes your weapon out) | Click | 💥 |
 | Switch weapon / hold it out | **Q** | 🔪 |
 | Hide / come out | Click a wardrobe or locker (or **H**) | 🚪 |
@@ -71,8 +84,9 @@ Bodies stay where they fell. If you get killed, you become a ghost and can float
 
 Plain HTML and JavaScript with three.js r128, no build step. Open `index.html` to play.
 
-- `train.js`: the train layout, walls, rooms, tasks and the paths bots walk on (works in Node too, for testing).
-- `game.js`: the 3D drawing, controls, bots, the HUD and online rooms.
+- `maps.js`: the two maps: walls, rooms, tasks, hiding places, stairs and the paths bots walk on (works in Node too, for testing).
+  Every wall, task and person has a floor number; people only bump into and see things on their own floor.
+- `game.js`: the 3D drawing (one group per map), controls, bots, the HUD and online rooms.
 
 Online rooms use the family Firebase Realtime Database (`kvgames`), under `murdermight/rooms/<CODE>`. Only game things are
 sent: colours, positions, task ticks, kills and accusations. No names or chat. The host is the referee (it decides kills

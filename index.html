@@ -72,6 +72,10 @@ h2 { margin: 0; }
 #click { position: absolute; left: 50%; bottom: 22%; transform: translateX(-50%); background: #000b; padding: 8px 16px; border-radius: 12px; font-weight: 600; }
 #hiding { position: absolute; inset: 0; box-shadow: inset 0 0 0 9999px #0000, inset 0 0 22vmin 12vmin #000e; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 18vh; font-weight: 700; font-size: 22px; text-align: center; text-shadow: 0 2px 0 #000; background: repeating-linear-gradient(0deg, #0000 0 34px, #1a0e0688 34px 44px); }
 #hiding small { font-size: 15px; }
+#hud.tall #map { height: 96px; width: min(96vw, 620px); }
+#hud.tall #role, #hud.tall #tasks { top: 112px; }
+#hud.tall #where { top: 108px; }
+#hud.tall #quit { top: 112px; }
 #flash { position: absolute; inset: 0; background: #ff000055; opacity: 0; transition: opacity .4s; }
 #quit { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); pointer-events: auto; padding: 4px 10px; font-size: 14px; opacity: .7; margin-top: 22px; }
 
@@ -123,10 +127,11 @@ h2 { margin: 0; }
 <!-- menu -->
 <div id="menu" class="screen">
   <div class="wrap">
-    <h1>MURDER MIGHT<small>🚂 Someone on this train is a murderer...</small></h1>
+    <h1>MURDER MIGHT<small>🔪 Someone here is a murderer...</small></h1>
     <div class="card">
       <h2>🤖 Play with bots</h2>
-      <label class="row">People on the train <select id="count">
+      <label class="row">Map <select id="mapsel"><option value="train">🚂 The Train</option><option value="mansion">🏰 The Mansion</option></select></label>
+      <label class="row">People playing <select id="count">
         <option>4</option><option>5</option><option>6</option><option>7</option><option selected>8</option><option>9</option><option>10</option>
       </select></label>
       <div>Your colour</div>
@@ -148,16 +153,17 @@ h2 { margin: 0; }
     <div class="card how">
       <h2>How to play</h2>
       <ul class="muted" style="margin:0;padding-left:20px">
-        <li>The train has 7 cars: the locomotive, rooms 1-10, 11-20, 21-30, 31-40, 41-50 and the caboose.</li>
+        <li><b>🚂 The Train</b> has 7 cars: the locomotive, rooms 1-10, 11-20, 21-30, 31-40, 41-50 and the caboose. Room 25 is the meeting room.</li>
+        <li><b>🏰 The Mansion</b> has 2 floors. Downstairs: kitchen, dining room, living room. Upstairs: bedroom, bathroom and the study, which is the meeting room. Take the stairs at the end of the hallway!</li>
         <li>One person is secretly the <b>murderer</b>. Everyone else is <b>innocent</b>.</li>
-        <li><b>Innocents:</b> do your 5 tasks. When all 5 are done, go to <b>room 25, the meeting room</b>, and <b>accuse</b> someone.
+        <li><b>Innocents:</b> do your 5 tasks. When all 5 are done, go to the <b>meeting room</b> and <b>accuse</b> someone.
           Right? You win! Wrong? The person you accused is out, and so are you!</li>
         <li><b>Murderer:</b> only you can hold weapons. You start with a 🔪 dagger. After 2 kills you get the 🔫 shotgun (it's loud!).
           After 4 kills you get the 📡 tracker and can see everyone on the map. Kill all the innocents to win.
           But anyone who sees your weapon out knows it's you!</li>
         <li><b>Hiding:</b> wardrobes and lockers are all over the train. Click it (or press <b>H</b>) to hide inside. Nobody can see you, and you're not on the tracker...
           but if the murderer stabs your hiding place, you're done!</li>
-        <li><b>Keys:</b> WASD to walk, mouse to look. <b>E</b> (hold) do a task. <b>F</b> accuse (in room 25). Murderer: <b>click</b> to attack (your weapon comes out for a moment), <b>Q</b> to switch weapons or hold one out.</li>
+        <li><b>Keys:</b> WASD to walk, mouse to look. <b>E</b> (hold) do a task. <b>F</b> accuse (in the meeting room). Murderer: <b>click</b> to attack (your weapon comes out for a moment), <b>Q</b> to switch weapons or hold one out.</li>
       </ul>
     </div>
   </div>
@@ -173,7 +179,8 @@ h2 { margin: 0; }
       <div class="players" id="lobby-players"></div>
       <div>Your colour</div>
       <div class="swatches" id="lobby-colors"></div>
-      <label class="row" id="lobby-fill-row">Fill the train with bots up to <select id="lobby-fill"></select> people</label>
+      <label class="row">Map <select id="lobby-map"><option value="train">🚂 The Train</option><option value="mansion">🏰 The Mansion</option></select></label>
+      <label class="row" id="lobby-fill-row">Fill up with bots to <select id="lobby-fill"></select> people</label>
       <p id="lobby-msg" class="muted" style="text-align:center;margin:0"></p>
       <button id="lobby-start" class="big primary" hidden>GO!</button>
       <button id="lobby-leave">◀ Leave</button>
@@ -196,7 +203,7 @@ h2 { margin: 0; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-<script src="train.js?v=2"></script>
-<script src="game.js?v=6"></script>
+<script src="maps.js?v=1"></script>
+<script src="game.js?v=7"></script>
 </body>
 </html>

@@ -1,9 +1,11 @@
 // Murder Might: a murder mystery on a train.
-// One secret murderer, everyone else innocent. Innocents do 5 tasks, then go to room 25 (the meeting room) to accuse.
+// One secret murderer, everyone else innocent. Innocents do 5 tasks, then go to the meeting room to accuse.
+// Two maps: the train and the mansion (see maps.js).
 // The murderer starts with a dagger, gets a shotgun after 2 kills and a tracker after 4.
 (() => {
   'use strict';
-  const TR = window.TRAIN;
+  const MAPS = window.MAPS;
+  let TR = MAPS.train; // the map being played
   const $ = (id) => document.getElementById(id);
 
   const COLORS = [
@@ -34,24 +36,27 @@
   // =====================================================================
   // Sound
   // =====================================================================
-  let AC = null, rumbleOn = false;
+  let AC = null, rumbleOn = false, rumbleGain = null;
   function audio() {
     if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
     if (AC.state === 'suspended') AC.resume();
     if (!rumbleOn && AC) { rumbleOn = true; startRumble(); }
     return AC;
   }
-  function noiseBuf(sec) {
-    const b = AC.createBuffer(1, AC.sampleRate * sec, AC.sampleRate), d = b.getChannelData(0);
+  let NOISE = null; // one shared 2-second noise sound, reused by every effect
+  function noiseBuf() {
+    if (NOISE) return NOISE;
+    NOISE = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
+    const d = NOISE.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    return b;
+    return NOISE;
   }
   function noise(sec, freq, vol, type = 'lowpass') {
     if (!audio()) return;
-    const src = AC.createBufferSource(); src.buffer = noiseBuf(sec);
+    const src = AC.createBufferSource(); src.buffer = noiseBuf();
     const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq;
     const g = AC.createGain(); g.gain.setValueAtTime(vol, AC.currentTime); g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + sec);
-    src.connect(f).connect(g).connect(AC.destination); src.start();
+    src.connect(f).connect(g).connect(AC.destination); src.start(0, Math.random(), sec);
   }
   function tone(freq, sec, vol, type = 'sine', to) {
     if (!audio()) return;
@@ -61,11 +66,11 @@
     o.connect(g).connect(AC.destination); o.start(); o.stop(AC.currentTime + sec);
   }
   function startRumble() {
-    const src = AC.createBufferSource(); src.buffer = noiseBuf(2); src.loop = true;
+    const src = AC.createBufferSource(); src.buffer = noiseBuf(); src.loop = true;
     const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 90;
-    const g = AC.createGain(); g.gain.value = 0.25;
+    const g = AC.createGain(); g.gain.value = G && TR.name !== 'train' ? 0 : 0.25; rumbleGain = g;
     src.connect(f).connect(g).connect(AC.destination); src.start();
-    setInterval(() => { if (G && !document.hidden) { noise(0.06, 900, 0.05); setTimeout(() => noise(0.06, 800, 0.04), 160); } }, 1300);
+    setInterval(() => { if (G && !document.hidden && TR.name === 'train') { noise(0.06, 900, 0.05); setTimeout(() => noise(0.06, 800, 0.04), 160); } }, 1300);
   }
   const SFX = {
     stab: () => noise(0.2, 2500, 0.5, 'highpass'),
@@ -123,7 +128,7 @@
   }
   function sign(text, x, y, z, rotY, w = 0.5, h = 0.19, bg = '#2b1a0e', fg = '#ffd86b') {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: textTex(text, bg, fg, Math.round(256 * w / h / 2.6), 96, 54) }));
-    m.position.set(x, y, z); m.rotation.y = rotY; scene.add(m); return m;
+    m.position.set(x, y, z); m.rotation.y = rotY; build.add(m); return m;
   }
 
   // the view out of the windows: one long picture that slides past
@@ -145,118 +150,239 @@
     const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; return t;
   })();
   const LAND_W = 18; // metres of train per copy of the picture
-  function windowPane(x, y, z, w, h, facing) {
+  function windowPane(x, y, z, w, h, facing, tex = landTex) {
     const geo = new THREE.PlaneGeometry(w, h);
     const uv = geo.attributes.uv, pos = geo.attributes.position;
     for (let i = 0; i < uv.count; i++) {
       const wx = x + pos.getX(i) * facing; // which way the plane faces flips its x
       uv.setX(i, wx / LAND_W);
     }
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: landTex }));
-    m.position.set(x, y, z); m.rotation.y = facing > 0 ? 0 : Math.PI; scene.add(m);
-    boxAt(scene, w + 0.1, 0.06, 0.06, x, y - h / 2, z + 0.02 * facing, '#3a2412');
-    boxAt(scene, w + 0.1, 0.06, 0.06, x, y + h / 2, z + 0.02 * facing, '#3a2412');
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
+    m.position.set(x, y, z); m.rotation.y = facing > 0 ? 0 : Math.PI; build.add(m);
+    boxAt(build, w + 0.1, 0.06, 0.06, x, y - h / 2, z + 0.02 * facing, '#3a2412');
+    boxAt(build, w + 0.1, 0.06, 0.06, x, y + h / 2, z + 0.02 * facing, '#3a2412');
   }
 
   const WALL_H = 2.7;
-  const TASK_MESH = []; // task id -> the object for that task
-  function buildTrain() {
-    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-    scene.add(new THREE.HemisphereLight(0xfff0d8, 0x442a1a, 0.4));
+  let build = scene; // the group that the map being drawn goes into
+  function drawTrain(M) {
+    build.add(new THREE.AmbientLight(0xffffff, 0.45));
+    build.add(new THREE.HemisphereLight(0xfff0d8, 0x442a1a, 0.4));
     const lampMat = new THREE.MeshBasicMaterial({ color: 0xffe6a8 });
-    for (const car of TR.CARS) {
+    for (const car of M.CARS) {
       const len = car.x1 - car.x0, cx = (car.x0 + car.x1) / 2;
       const floor = car.kind === 'loco' ? '#3b3b40' : car.kind === 'cab' ? '#6b4a2a' : '#8a5a34';
-      boxAt(scene, len, 0.1, TR.CW * 2 + 0.24, cx, -0.05, 0, floor);
-      boxAt(scene, len, 0.1, TR.CW * 2 + 0.24, cx, WALL_H + 0.05, 0, car.kind === 'loco' ? '#2a2a2e' : '#e8d8b8');
-      if (car.kind === 'pass') boxAt(scene, len - 2, 0.02, 1.0, cx, 0.01, TR.DOORZ, '#7a1e2a'); // corridor carpet
+      boxAt(build, len, 0.1, M.CW * 2 + 0.24, cx, -0.05, 0, floor);
+      boxAt(build, len, 0.1, M.CW * 2 + 0.24, cx, WALL_H + 0.05, 0, car.kind === 'loco' ? '#2a2a2e' : '#e8d8b8');
+      if (car.kind === 'pass') boxAt(build, len - 2, 0.02, 1.0, cx, 0.01, M.DOORZ, '#7a1e2a'); // corridor carpet
       const nl = car.kind === 'pass' ? 2 : 1;
       for (let k = 0; k < nl; k++) {
         const lx = car.x0 + len * (k + 0.5) / nl;
-        const l = new THREE.PointLight(0xffd9a0, 0.8, 20); l.position.set(lx, 2.35, 0.3); scene.add(l);
+        const l = new THREE.PointLight(0xffd9a0, 0.8, 20); l.position.set(lx, 2.35, 0.3); build.add(l);
       }
-      for (let lx = car.x0 + 1.5; lx < car.x1 - 0.5; lx += 4) ball(scene, 0.1, lx, WALL_H - 0.05, TR.DOORZ, null, lampMat);
+      for (let lx = car.x0 + 1.5; lx < car.x1 - 0.5; lx += 4) ball(build, 0.1, lx, WALL_H - 0.05, M.DOORZ, null, lampMat);
       // car name signs over the doors
-      if (car.i > 0) sign(car.name, car.x0 + TR.T + 0.01, 2.2, TR.DOORZ, Math.PI / 2, 0.9, 0.22);
-      if (car.i < TR.CARS.length - 1) sign(car.name, car.x1 - TR.T - 0.01, 2.2, TR.DOORZ, -Math.PI / 2, 0.9, 0.22);
-      if (car.i < TR.CARS.length - 1) { // the walkway between cars
-        const nx = TR.CARS[car.i + 1].x0;
-        boxAt(scene, nx - car.x1, 0.1, TR.DOOR1 - TR.DOOR0 + 0.24, (car.x1 + nx) / 2, -0.05, TR.DOORZ, '#2a2a2a');
-        boxAt(scene, nx - car.x1, 0.1, TR.DOOR1 - TR.DOOR0 + 0.24, (car.x1 + nx) / 2, WALL_H + 0.05, TR.DOORZ, '#1a1a1a');
+      if (car.i > 0) sign(car.name, car.x0 + M.T + 0.01, 2.2, M.DOORZ, Math.PI / 2, 0.9, 0.22);
+      if (car.i < M.CARS.length - 1) sign(car.name, car.x1 - M.T - 0.01, 2.2, M.DOORZ, -Math.PI / 2, 0.9, 0.22);
+      if (car.i < M.CARS.length - 1) { // the walkway between cars
+        const nx = M.CARS[car.i + 1].x0;
+        boxAt(build, nx - car.x1, 0.1, M.DOOR1 - M.DOOR0 + 0.24, (car.x1 + nx) / 2, -0.05, M.DOORZ, '#2a2a2a');
+        boxAt(build, nx - car.x1, 0.1, M.DOOR1 - M.DOOR0 + 0.24, (car.x1 + nx) / 2, WALL_H + 0.05, M.DOORZ, '#1a1a1a');
       }
     }
-    for (const w of TR.SIGHT) {
-      const car = TR.CARS.find((c) => w.x0 >= c.x0 - 0.01 && w.x1 <= c.x1 + 0.01);
+    for (const w of M.WALLS) {
+      const car = M.CARS.find((c) => w.x0 >= c.x0 - 0.01 && w.x1 <= c.x1 + 0.01);
       let color = '#c39463', h = WALL_H;
-      if (w.z0 <= -TR.CW - TR.T + 0.001 || w.z1 >= TR.CW + TR.T - 0.001) color = '#6e2630';
+      if (w.z0 <= -M.CW - M.T + 0.001 || w.z1 >= M.CW + M.T - 0.001) color = '#6e2630';
       else if (!car) color = '#4a4a4e';
-      else if (car.kind === 'loco' && w.x1 - w.x0 > 5) { color = '#20402c'; h = 2.2; }
+      else if (w.boiler) { color = '#20402c'; h = 2.2; }
       else if (car.kind !== 'pass') color = '#5a3a22';
-      boxAt(scene, w.x1 - w.x0, h, w.z1 - w.z0, (w.x0 + w.x1) / 2, h / 2, (w.z0 + w.z1) / 2, color);
+      boxAt(build, w.x1 - w.x0, h, w.z1 - w.z0, (w.x0 + w.x1) / 2, h / 2, (w.z0 + w.z1) / 2, color);
     }
     // windows
-    for (const r of TR.ROOMS) {
-      windowPane(r.xc, 1.55, -TR.CW + 0.01, 1.2, 0.8, 1);
-      windowPane(r.xc, 1.55, TR.CW - 0.01, 1.2, 0.8, -1);
-      const t = textTex(String(r.n), r.n === TR.MEETING_N ? '#7a1020' : '#2b1a0e', '#ffd86b', 128, 96, 60);
+    for (const r of M.ROOMS) {
+      windowPane(r.xc, 1.55, -M.CW + 0.01, 1.2, 0.8, 1);
+      windowPane(r.xc, 1.55, M.CW - 0.01, 1.2, 0.8, -1);
+      const t = textTex(String(r.n), r.n === M.MEETING_N ? '#7a1020' : '#2b1a0e', '#ffd86b', 128, 96, 60);
       const m = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.25), new THREE.MeshBasicMaterial({ map: t }));
-      m.position.set(r.xc, 2.3, TR.CORR + TR.T + 0.01); scene.add(m);
-      if (r.n === TR.MEETING_N) sign('MEETING ROOM', r.xc, 2.0, TR.CORR + TR.T + 0.01, 0, 0.9, 0.16, '#7a1020', '#fff');
+      m.position.set(r.xc, 2.3, M.CORR + M.T + 0.01); build.add(m);
+      if (r.n === M.MEETING_N) sign('MEETING ROOM', r.xc, 2.0, M.CORR + M.T + 0.01, 0, 0.9, 0.16, '#7a1020', '#fff');
     }
-    for (const car of TR.CARS) if (car.kind !== 'pass') {
-      for (let x = car.x0 + 2; x < car.x1 - 1; x += 3) windowPane(x, 1.6, TR.CW - 0.01, 1.0, 0.7, -1);
+    for (const car of M.CARS) if (car.kind !== 'pass') {
+      for (let x = car.x0 + 2; x < car.x1 - 1; x += 3) windowPane(x, 1.6, M.CW - 0.01, 1.0, 0.7, -1);
     }
-    // furniture
-    for (const f of TR.FURN) {
-      const w = f.x1 - f.x0, d = f.z1 - f.z0, cx = (f.x0 + f.x1) / 2, cz = (f.z0 + f.z1) / 2;
-      if (f.kind === 'bed') {
-        boxAt(scene, w, 0.3, d, cx, 0.15, cz, '#5a3a22');
-        boxAt(scene, w - 0.05, 0.15, d - 0.05, cx, 0.37, cz, '#e9e4f2');
-        boxAt(scene, w * 0.55, 0.06, d - 0.04, cx + w * 0.2, 0.47, cz, '#6a7ac8');
-      } else if (f.kind === 'table') {
-        boxAt(scene, w, 0.06, d, cx, f.h, cz, '#7a4e2a');
-        boxAt(scene, 0.08, f.h, 0.08, cx, f.h / 2, cz, '#5a3a22');
-      } else if (f.kind === 'meeting') {
-        boxAt(scene, w, 0.08, d, cx, f.h, cz, '#4a2a18');
-        boxAt(scene, w - 0.2, f.h, 0.1, cx, f.h / 2, cz, '#3a2012');
-        cyl(scene, 0.12, 0.16, 0.18, cx, f.h + 0.13, cz, '#e8c040');
-        for (const dx of [-0.6, 0, 0.6]) cyl(scene, 0.2, 0.2, 0.45, cx + dx, 0.22, cz + d / 2 + 0.35, '#8a1e2e');
-      } else if (f.kind === 'coal') {
-        boxAt(scene, w, 0.3, d, cx, 0.15, cz, '#3a3a3a');
-        for (let i = 0; i < 14; i++) ball(scene, 0.12 + (i % 3) * 0.04, f.x0 + 0.15 + (i * 0.37) % (w - 0.3), 0.35 + (i % 4) * 0.05, f.z0 + 0.15 + (i * 0.23) % (d - 0.3), '#151515');
-      } else if (f.kind === 'panel') {
-        boxAt(scene, w, f.h, d, cx, f.h / 2, cz, '#555a60');
-        for (let i = 0; i < 4; i++) cyl(scene, 0.06, 0.06, 0.05, f.x0 + 0.2 + i * 0.25, f.h + 0.03, cz, i % 2 ? '#e03030' : '#30c040', 8);
-      } else if (f.kind === 'desk') {
-        boxAt(scene, w, 0.06, d, cx, f.h, cz, '#6a4020');
-        boxAt(scene, w - 0.1, f.h, d - 0.1, cx, f.h / 2, cz, '#4a2a14');
-      } else if (f.kind === 'stove') {
-        boxAt(scene, w, f.h, d, cx, f.h / 2, cz, '#222');
-        boxAt(scene, 0.4, 0.25, 0.02, cx, 0.45, f.z1 + 0.01, null, glow('#ff7a20'));
-        cyl(scene, 0.1, 0.1, WALL_H - f.h, cx, f.h + (WALL_H - f.h) / 2, cz, '#333');
-      } else if (f.kind === 'bunk') {
-        boxAt(scene, w, 0.25, d, cx, f.h - 0.12, cz, '#5a3a22');
-        boxAt(scene, w - 0.05, 0.12, d - 0.05, cx, f.h + 0.06, cz, '#b0a080');
-      } else if (f.kind === 'wardrobe' || f.kind === 'locker') {
-        const wood = f.kind === 'wardrobe';
-        boxAt(scene, w, f.h, d, cx, f.h / 2, cz, wood ? '#6a3e1e' : '#4a5a6a');
-        boxAt(scene, w + 0.04, 0.06, d + 0.04, cx, f.h, cz, wood ? '#4a2a12' : '#333');
-        // the doors face the room (wardrobes) or the aisle (lockers): -z for wardrobes, +z for lockers
-        const fz = wood ? f.z0 - 0.01 : f.z1 + 0.01;
-        boxAt(scene, 0.015, f.h - 0.2, 0.02, cx, f.h / 2, fz, '#2a1a0a');
-        for (const kx of [-0.06, 0.06]) ball(scene, 0.025, cx + kx, 1.0, fz, '#e8c040');
-        if (!wood) for (let y = 1.5; y < 1.8; y += 0.08) boxAt(scene, w - 0.2, 0.02, 0.02, cx, y, fz, '#222');
-      } else boxAt(scene, w, f.h, d, cx, f.h / 2, cz, '#777');
-    }
+    for (const f of M.FURN) drawFurn(M, f);
     // the front of the locomotive: a fire door on the boiler
-    const loco = TR.CARS[0];
-    boxAt(scene, 0.04, 0.5, 0.7, loco.x0 + 6.52, 0.6, -1.3, null, glow('#ff6a10'));
+    const loco = M.CARS[0];
+    boxAt(build, 0.04, 0.5, 0.7, loco.x0 + 6.52, 0.6, -1.3, null, glow('#ff6a10'));
     // task objects
-    for (const t of TR.TASKS) TASK_MESH[t.id] = taskObject(t);
+    for (const t of M.TASKS) taskObject(M, t);
   }
 
-  function taskObject(t) {
-    const g = new THREE.Group(); g.position.set(t.ox, t.oy, t.oz); scene.add(g);
+  // is this piece of furniture a hiding place?
+  function hideAt(M, f) {
+    return M.HIDES.find((h) => h.f === (f.f || 0) && Math.abs(h.x - (f.x0 + f.x1) / 2) < 0.01 && Math.abs(h.z - (f.z0 + f.z1) / 2) < 0.01);
+  }
+  // a wardrobe, locker, closet, pantry, cabinet or shower, with its doors facing where you get in
+  function drawHide(P, f, h) {
+    const w = f.x1 - f.x0, d = f.z1 - f.z0, cx = (f.x0 + f.x1) / 2, cz = (f.z0 + f.z1) / 2;
+    const look = {
+      wardrobe: ['#6a3e1e', '#4a2a12'], closet: ['#7a5030', '#4a2a12'], pantry: ['#c8b080', '#7a5a3a'],
+      cabinet: ['#5a2a18', '#3a1a0a'], locker: ['#4a5a6a', '#333'], shower: ['#e8f0f4', '#9ab0c0'],
+    }[h.kind] || ['#6a3e1e', '#4a2a12'];
+    boxAt(P, w, f.h, d, cx, f.h / 2, cz, look[0]);
+    boxAt(P, w + 0.04, 0.06, d + 0.04, cx, f.h, cz, look[1]);
+    // which side are the doors on? the side nearest where you get in
+    const side = h.ez < f.z0 ? 'z0' : h.ez > f.z1 ? 'z1' : h.ex < f.x0 ? 'x0' : 'x1';
+    const alongX = side[0] === 'z';
+    const fz = side === 'z0' ? f.z0 - 0.01 : side === 'z1' ? f.z1 + 0.01 : cz;
+    const fx = side === 'x0' ? f.x0 - 0.01 : side === 'x1' ? f.x1 + 0.01 : cx;
+    if (h.kind === 'shower') { // a shower curtain
+      boxAt(P, alongX ? w - 0.1 : 0.02, f.h - 0.3, alongX ? 0.02 : d - 0.1, fx, f.h / 2 + 0.1, fz, '#5aa8d8');
+      return;
+    }
+    boxAt(P, alongX ? 0.015 : 0.02, f.h - 0.2, alongX ? 0.02 : 0.015, fx, f.h / 2, fz, '#2a1a0a');
+    for (const k of [-0.06, 0.06]) ball(P, 0.025, fx + (alongX ? k : 0), 1.0, fz + (alongX ? 0 : k), '#e8c040');
+    if (h.kind === 'locker') for (let y = 1.5; y < 1.8; y += 0.08) boxAt(P, alongX ? w - 0.2 : 0.02, 0.02, alongX ? 0.02 : d - 0.2, fx, y, fz, '#222');
+  }
+
+  // ---------- the mansion ----------
+  const gardenTex = new THREE.CanvasTexture(landTex.image); gardenTex.wrapS = THREE.RepeatWrapping;
+  function drawMansion(M) {
+    const FH = M.FH, W = M.BOUNDS.x1, D = M.BOUNDS.z1, ST = M.STAIRS[0];
+    build.add(new THREE.AmbientLight(0xffffff, 0.5));
+    build.add(new THREE.HemisphereLight(0xfff0d8, 0x442a1a, 0.4));
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xffe6a8 });
+    for (let f = 0; f < 2; f++) {
+      const y = f * FH;
+      // floors: downstairs is one big floor, upstairs has a hole for the stairs
+      if (f === 0) boxAt(build, W, 0.1, D, W / 2, -0.05, D / 2, '#7a5030');
+      else {
+        boxAt(build, ST.x0, 0.2, D, ST.x0 / 2, y - 0.1, D / 2, '#7a5030');
+        boxAt(build, W - ST.x0, 0.2, D - ST.z1, (ST.x0 + W) / 2, y - 0.1, (ST.z1 + D) / 2, '#7a5030');
+      }
+      boxAt(build, W, 0.1, D, W / 2, y + FH - 0.15, D / 2, '#efe4cc').visible = f === 1; // the roof's ceiling
+      // rugs and tiles in each room
+      for (const r of M.ROOMS.filter((r) => r.f === f)) {
+        const tile = r.name === 'Kitchen' || r.name === 'Bathroom';
+        boxAt(build, r.x1 - r.x0 - 1.2, 0.02, r.z1 - r.z0 - 1.2, r.xc, y + 0.01, (r.z0 + r.z1) / 2, tile ? '#d8d8d0' : r.color);
+        const l = new THREE.PointLight(0xffd9a0, 0.75, 14); l.position.set(r.xc, y + 2.7, 7.5); build.add(l);
+        ball(build, 0.15, r.xc, y + FH - 0.3, 7.5, null, lamp);
+        // the room's name over its door, on the hallway side
+        sign(r.name === 'Study' ? 'STUDY (MEETING ROOM)' : r.name.toUpperCase(), r.xc, y + 2.55, M.ROOMS[0].z0 - 0.01, Math.PI, r.name === 'Study' ? 1.5 : 1.1, 0.22, r.name === 'Study' ? '#7a1020' : '#2b1a0e', '#ffd86b');
+        windowPane(r.xc, y + 1.6, D - 0.01, 1.6, 1.1, -1, gardenTex);
+      }
+      boxAt(build, W - 1, 0.02, 1.2, W / 2 - 3, y + 0.01, 1.5, '#7a1e2a'); // hallway carpet
+      for (const lx of [5, 15]) {
+        const l = new THREE.PointLight(0xffd9a0, 0.6, 12); l.position.set(lx, y + 2.6, 1.5); build.add(l);
+        ball(build, 0.12, lx, y + FH - 0.3, 1.5, null, lamp);
+      }
+      for (const wx of [4, 12]) windowPane(wx, y + 1.6, 0.01, 1.4, 1.0, 1, gardenTex);
+      // paintings in the hallway
+      for (const px of [7, 10, 17]) { boxAt(build, 0.9, 0.7, 0.04, px, y + 1.6, 0.03, '#c0a040'); boxAt(build, 0.75, 0.55, 0.02, px, y + 1.6, 0.06, ['#4a6a9a', '#9a4a4a', '#4a8a5a'][px % 3]); }
+    }
+    // walls
+    for (const w of M.WALLS) {
+      const outer = w.z0 < 0 || w.z1 > D || w.x0 < 0 || w.x1 > W;
+      boxAt(build, w.x1 - w.x0, FH, w.z1 - w.z0, (w.x0 + w.x1) / 2, w.f * FH + FH / 2, (w.z0 + w.z1) / 2, outer ? '#8a6a5a' : '#d8c8a8');
+    }
+    // the stairs: 12 steps going up toward the study end of the hallway
+    const n = 12, len = ST.x1 - ST.x0;
+    for (let i = 0; i < n; i++) {
+      const top = (i + 1) * FH / n, x1 = ST.x1 - i * len / n;
+      boxAt(build, len / n, top, ST.z1 - ST.z0, x1 - len / n / 2, top / 2, (ST.z0 + ST.z1) / 2, i % 2 ? '#8a5a30' : '#7a4a24');
+    }
+    for (const f of M.FURN) drawFurn(M, f);
+    for (const t of M.TASKS) taskObject(M, t);
+  }
+
+  // furniture (on its own floor)
+  function drawFurn(M, f) {
+    const P = new THREE.Group(); P.position.y = (f.f || 0) * M.FH; build.add(P);
+      const w = f.x1 - f.x0, d = f.z1 - f.z0, cx = (f.x0 + f.x1) / 2, cz = (f.z0 + f.z1) / 2;
+      if (f.kind === 'bed') {
+        boxAt(P, w, 0.3, d, cx, 0.15, cz, '#5a3a22');
+        boxAt(P, w - 0.05, 0.15, d - 0.05, cx, 0.37, cz, '#e9e4f2');
+        boxAt(P, w * 0.55, 0.06, d - 0.04, cx + w * 0.2, 0.47, cz, '#6a7ac8');
+      } else if (f.kind === 'table') {
+        boxAt(P, w, 0.06, d, cx, f.h, cz, '#7a4e2a');
+        boxAt(P, 0.08, f.h, 0.08, cx, f.h / 2, cz, '#5a3a22');
+      } else if (f.kind === 'meeting') {
+        boxAt(P, w, 0.08, d, cx, f.h, cz, '#4a2a18');
+        boxAt(P, w - 0.2, f.h, 0.1, cx, f.h / 2, cz, '#3a2012');
+        cyl(P, 0.12, 0.16, 0.18, cx, f.h + 0.13, cz, '#e8c040');
+        for (const dx of [-0.6, 0, 0.6]) cyl(P, 0.2, 0.2, 0.45, cx + dx, 0.22, cz + d / 2 + 0.35, '#8a1e2e');
+      } else if (f.kind === 'coal') {
+        boxAt(P, w, 0.3, d, cx, 0.15, cz, '#3a3a3a');
+        for (let i = 0; i < 14; i++) ball(P, 0.12 + (i % 3) * 0.04, f.x0 + 0.15 + (i * 0.37) % (w - 0.3), 0.35 + (i % 4) * 0.05, f.z0 + 0.15 + (i * 0.23) % (d - 0.3), '#151515');
+      } else if (f.kind === 'panel') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#555a60');
+        for (let i = 0; i < 4; i++) cyl(P, 0.06, 0.06, 0.05, f.x0 + 0.2 + i * 0.25, f.h + 0.03, cz, i % 2 ? '#e03030' : '#30c040', 8);
+      } else if (f.kind === 'desk') {
+        boxAt(P, w, 0.06, d, cx, f.h, cz, '#6a4020');
+        boxAt(P, w - 0.1, f.h, d - 0.1, cx, f.h / 2, cz, '#4a2a14');
+      } else if (f.kind === 'stove') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#222');
+        boxAt(P, 0.4, 0.25, 0.02, cx, 0.45, f.z1 + 0.01, null, glow('#ff7a20'));
+        cyl(P, 0.1, 0.1, WALL_H - f.h, cx, f.h + (WALL_H - f.h) / 2, cz, '#333');
+      } else if (f.kind === 'bunk') {
+        boxAt(P, w, 0.25, d, cx, f.h - 0.12, cz, '#5a3a22');
+        boxAt(P, w - 0.05, 0.12, d - 0.05, cx, f.h + 0.06, cz, '#b0a080');
+      } else if (hideAt(M, f)) {
+        drawHide(P, f, hideAt(M, f));
+      } else if (f.kind === 'counter' || f.kind === 'sideboard' || f.kind === 'dresser') {
+        boxAt(P, w, f.h - 0.05, d, cx, (f.h - 0.05) / 2, cz, f.kind === 'counter' ? '#e8e0d0' : '#5a3218');
+        boxAt(P, w + 0.04, 0.05, d + 0.04, cx, f.h - 0.025, cz, f.kind === 'counter' ? '#6a6a70' : '#3a1e0c');
+      } else if (f.kind === 'oven') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#2a2a2e');
+        boxAt(P, w - 0.3, 0.35, 0.02, cx, 0.35, f.z0 - 0.01, null, glow('#ff8a30'));
+        for (const dx of [-0.4, 0.4]) cyl(P, 0.15, 0.15, 0.02, cx + dx, f.h + 0.01, cz, '#111', 12);
+      } else if (f.kind === 'fridge') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#e8eef2');
+        boxAt(P, 0.02, 0.5, 0.04, f.x1 + 0.01, 1.2, cz + 0.4, '#999');
+      } else if (f.kind === 'dtable' || f.kind === 'ktable') {
+        boxAt(P, w, 0.06, d, cx, f.h, cz, '#6a3a1a');
+        for (const [ox, oz] of [[0.1, 0.1], [w - 0.1, 0.1], [0.1, d - 0.1], [w - 0.1, d - 0.1]]) boxAt(P, 0.08, f.h, 0.08, f.x0 + ox, f.h / 2, f.z0 + oz, '#4a2a12');
+        if (f.kind === 'dtable') for (let x = f.x0 + 0.5; x < f.x1; x += 1) for (const z of [f.z0 - 0.35, f.z1 + 0.35]) {
+          boxAt(P, 0.45, 0.06, 0.45, x, 0.45, z, '#7a1e2e'); boxAt(P, 0.45, 0.6, 0.06, x, 0.75, z + (z < cz ? -0.2 : 0.2), '#4a2a12');
+        }
+      } else if (f.kind === 'trash') {
+        cyl(P, 0.28, 0.24, f.h, cx, f.h / 2, cz, '#6a7a6a');
+      } else if (f.kind === 'gclock') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#4a2410');
+        const face = cyl(P, 0.2, 0.2, 0.03, cx, 1.75, f.z0 - 0.01, '#f4ecd0', 20); face.rotation.x = Math.PI / 2;
+      } else if (f.kind === 'sofa') {
+        boxAt(P, w, 0.45, d, cx, 0.22, cz, '#8a2a3a');
+        boxAt(P, w, 0.5, 0.25, cx, 0.7, f.z1 - 0.12, '#7a1e2e');
+        for (const x of [f.x0 + 0.12, f.x1 - 0.12]) boxAt(P, 0.25, 0.65, d, x, 0.32, cz, '#7a1e2e');
+      } else if (f.kind === 'fireplace') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#8a5a4a');
+        boxAt(P, 0.04, 0.6, d - 0.8, f.x0 - 0.01, 0.4, cz, null, glow('#ff6a10'));
+        boxAt(P, w + 0.2, 0.1, d + 0.2, cx, f.h, cz, '#5a3a2a');
+      } else if (f.kind === 'radio') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#6a3a1a');
+        boxAt(P, w - 0.3, 0.3, 0.02, cx, 0.6, f.z0 - 0.01, '#d8c080');
+      } else if (f.kind === 'mbed') {
+        boxAt(P, w, 0.35, d, cx, 0.18, cz, '#5a3a22');
+        boxAt(P, w - 0.05, 0.2, d - 0.05, cx, 0.45, cz, '#f0e8f4');
+        boxAt(P, w - 0.1, 0.06, d * 0.55, cx, 0.57, f.z0 + d * 0.3, '#b04a6a');
+        boxAt(P, w, 1.1, 0.1, cx, 0.55, f.z1 - 0.05, '#4a2a12');
+      } else if (f.kind === 'bath') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#f4f4f8');
+        boxAt(P, w - 0.2, 0.05, d - 0.2, cx, f.h - 0.04, cz, '#7ac0e8');
+      } else if (f.kind === 'bsink' || f.kind === 'toilet') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#f4f4f8');
+        if (f.kind === 'bsink') boxAt(P, w - 0.1, 0.8, 0.03, cx, 1.6, f.z1 - 0.02, '#bfe0f0');
+      } else if (f.kind === 'books') {
+        boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#4a2a12');
+        for (let y = 0.35; y < f.h; y += 0.45) for (let x = f.x0 + 0.1; x < f.x1 - 0.1; x += 0.3) boxAt(P, 0.22, 0.32, 0.04, x + 0.11, y, f.z0 - 0.02, ['#a03030', '#305a90', '#30804a', '#c0a030'][Math.floor(x * 7 + y * 3) % 4]);
+      } else if (f.kind === 'rail') {
+        boxAt(P, w, 0.06, d, cx, f.h, cz, '#5a3218');
+        for (let x = f.x0 + 0.1; x < f.x1; x += 0.4) boxAt(P, 0.05, f.h, 0.05, x, f.h / 2, cz, '#5a3218');
+      } else boxAt(P, w, f.h, d, cx, f.h / 2, cz, '#777');
+      }
+  function taskObject(M, t) {
+    const g = new THREE.Group(); g.position.set(t.ox, t.oy + t.f * M.FH, t.oz); build.add(g);
     switch (t.kind) {
       case 'bed': boxAt(g, 0.45, 0.14, 0.4, 0, 0.05, 0, '#ffffff'); break;
       case 'lamp': cyl(g, 0.05, 0.08, 0.3, 0, 0.15, 0, '#8a6a3a'); cyl(g, 0.08, 0.17, 0.18, 0, 0.36, 0, '#f0d070'); break;
@@ -270,6 +396,27 @@
       case 'brake': { const w = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.04, 8, 20), mat('#c03030')); w.rotation.y = Math.PI / 2; g.add(w); cyl(g, 0.03, 0.03, 1.1, 0, -0.55, 0, '#555', 6); break; }
       case 'mail': for (let i = 0; i < 4; i++) boxAt(g, 0.28, 0.02, 0.18, (i % 2) * 0.05, 0.03 + i * 0.025, 0, '#f4f0e0'); break;
       case 'stove': boxAt(g, 0.3, 0.12, 0.2, 0, 0.06, 0, '#5a2a10'); break;
+      // the mansion
+      case 'dishes': for (let i = 0; i < 4; i++) cyl(g, 0.13, 0.11, 0.02, 0, 0.02 + i * 0.025, 0, '#f4f4f4', 14); break;
+      case 'soup': cyl(g, 0.16, 0.14, 0.22, 0, 0.11, 0, '#5a5a62', 14); break;
+      case 'trash': boxAt(g, 0.3, 0.12, 0.3, 0, 0.06, 0, '#2a2a2a'); break;
+      case 'fridge': boxAt(g, 0.4, 0.3, 0.3, 0.4, -0.65, 0, '#b07a3a'); break;
+      case 'settable': for (const dx of [-0.6, 0, 0.6]) cyl(g, 0.12, 0.12, 0.02, dx, 0.02, 0, '#f4f4f4', 14); break;
+      case 'candles': for (const dx of [-0.15, 0, 0.15]) { cyl(g, 0.03, 0.03, 0.25, dx, 0.13, 0, '#f4ecd0', 8); ball(g, 0.03, dx, 0.28, 0, null, glow('#ffb030')); } break;
+      case 'silver': cyl(g, 0.12, 0.08, 0.1, 0, 0.05, 0, '#c8ccd4', 12); break;
+      case 'clock': break;
+      case 'fire': for (let i = 0; i < 3; i++) { const l = cyl(g, 0.05, 0.05, 0.6, 0, 0.05 + i * 0.08, -0.3 + i * 0.3, '#5a3a1a', 8); l.rotation.z = Math.PI / 2; } break;
+      case 'cushions': for (const dx of [-1, 0, 1]) boxAt(g, 0.4, 0.35, 0.15, dx, 0.18, 0, ['#e0c040', '#40a0c0', '#c04070'][dx + 1]); break;
+      case 'radio': ball(g, 0.04, 0.3, 0, -0.03, '#222'); break;
+      case 'sweep': { const b = cyl(g, 0.02, 0.02, 1.2, 0, 0.6, 0, '#8a6a3a', 6); b.rotation.z = 0.3; boxAt(g, 0.3, 0.12, 0.08, -0.17, 0.05, 0, '#c0a050'); break; }
+      case 'clothes': for (let i = 0; i < 3; i++) boxAt(g, 0.35, 0.05, 0.3, 0, 0.03 + i * 0.05, 0, ['#4a7ac0', '#c04a4a', '#e0e0e0'][i]); break;
+      case 'curtains': boxAt(g, 0.04, 1.6, 1.3, 0.02, 0, 0, '#9a2a4a'); break;
+      case 'cat': ball(g, 0.18, 0, 0.18, 0.25, '#e08a30'); ball(g, 0.11, 0, 0.36, 0.05, '#e08a30'); cyl(g, 0.12, 0.1, 0.06, 0, 0.03, -0.25, '#3070c0', 12); break;
+      case 'mirror': boxAt(g, 0.7, 0.6, 0.02, 0, 0, -0.02, '#cfe8f4'); break;
+      case 'tub': ball(g, 0.12, 0.3, 0.05, 0, '#f0e040'); break;
+      case 'toilet': { const p = cyl(g, 0.02, 0.02, 0.6, 0.3, 0.3, 0, '#8a6a3a', 6); p.rotation.z = 0.2; cyl(g, 0.1, 0.06, 0.08, 0.36, 0.0, 0, '#a02020', 10); break; }
+      case 'towels': boxAt(g, 0.04, 0.6, 0.5, 0.02, 0, 0, '#5ac0b0'); break;
+      case 'paint': boxAt(g, 0.25, 0.08, 0.04, 0.6, -0.4, 0.05, '#e0d0a0'); break;
     }
     return g;
   }
@@ -344,19 +491,22 @@
   // Starting a game
   // =====================================================================
   // def: { id, slots: [{ c, o }], m, tasks: [[ids]], spawn: [[x, z]] }  (o = owner: '' for a bot)
-  function makeDef(humans, total, murderer) {
+  function makeDef(map, humans, total, murderer) {
+    TR = MAPS[map];
     const free = shuffle(COLORS.map((_, i) => i).filter((i) => !humans.some((h) => h.c === i)));
     const slots = humans.map((h) => ({ c: h.c, o: h.o }));
     while (slots.length < total && free.length) slots.push({ c: free.pop(), o: '' });
     const ids = TR.TASKS.map((t) => t.id);
     const tasks = slots.map(() => shuffle(ids.slice()).slice(0, NTASK));
     const spots = shuffle(TR.SPAWNS.slice());
-    const spawn = slots.map((_, i) => { const n = spots[i % spots.length]; return [+(n.x + rand(-0.4, 0.4)).toFixed(2), n.z]; });
-    return { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), slots, m: murderer, tasks, spawn };
+    const spawn = slots.map((_, i) => { const n = spots[i % spots.length]; return [n.x, n.z, n.f]; });
+    return { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), map, slots, m: murderer, tasks, spawn };
   }
 
   function startGame(def, online) {
     stopGame();
+    TR = MAPS[def.map] || MAPS.train;
+    showMap(TR.name);
     const me = online ? def.slots.findIndex((s) => s.o === myId) : def.slots.findIndex((s) => s.o === 'me');
     G = {
       def, online, host: online ? room.isHost : true, me, m: def.m, bodies: [], over: false, t0: now(),
@@ -364,7 +514,7 @@
       slots: def.slots.map((d, i) => ({
         i, c: d.c, o: d.o || '', tasks: def.tasks[i], alive: true, out: false,
         x: def.spawn[i][0], z: def.spawn[i][1], a: Math.random() * Math.PI * 2, w: 0, kills: 0,
-        tx: def.spawn[i][0], tz: def.spawn[i][1], ta: 0, ai: null, mesh: null, hide: -1,
+        tx: def.spawn[i][0], tz: def.spawn[i][1], ta: 0, ai: null, mesh: null, hide: -1, f: def.spawn[i][2] || 0,
       })),
     };
     for (const s of G.slots) { s.ta = s.a; s.mesh = makePerson(COLORS[s.c].h); }
@@ -385,15 +535,16 @@
       big('🔪 You are the MURDERER!', `Kill everyone without getting seen. Your weapon is ready in ${GRACE} seconds. Click to attack!`, 6);
       $('role').className = 'm';
     } else {
-      big('🙂 You are INNOCENT', 'Do your 5 tasks, then go to room 25 (the meeting room) to accuse the murderer!', 6);
+      big('🙂 You are INNOCENT', `Do your 5 tasks, then go to ${TR.MEETING_NAME} to accuse the murderer!`, 6);
       $('role').className = 'i';
     }
     $('t-weap').hidden = $('t-hit').hidden = G.me !== G.m;
     $('t-acc').hidden = G.me === G.m;
     $('hiding').hidden = true;
-    camera.position.set(mine.x, EYE, mine.z);
+    camera.position.set(mine.x, TR.yAt(mine.x, mine.z, mine.f) + EYE, mine.z);
     audio();
-    SFX.whistle();
+    if (rumbleGain) rumbleGain.gain.value = TR.name === 'train' ? 0.25 : 0;
+    if (TR.name === 'train') SFX.whistle(); else SFX.ding();
     if (!isTouch) tryLock();
   }
 
@@ -432,21 +583,21 @@
       if (by !== G.m || (w === 2 && A.kills < 2) || t - A.start < GRACE - 1) return;
       const spot = s && s.hide >= 0 ? TR.HIDES[s.hide] : null;
       const ok = s && v !== by && A.alive[v] && t - A.last > 0.4 && (spot
-        ? w === 1 && Math.hypot(k.x - spot.x, k.z - spot.z) <= 2.2 // someone hiding: only the dagger, right at the hiding place
-        : dist(k, s) <= (w === 2 ? SHOTGUN + 1.5 : DAGGER + 1.2) && (w === 1 || TR.los(k.x, k.z, s.x, s.z)));
+        ? w === 1 && k.f === spot.f && Math.hypot(k.x - spot.x, k.z - spot.z) <= 2.2 // someone hiding: only the dagger, right at the hiding place
+        : k.f === s.f && dist(k, s) <= (w === 2 ? SHOTGUN + 1.5 : DAGGER + 1.2) && (w === 1 || TR.see(k, s)));
       if (!ok) { if (w === 2) emit({ t: 'bang', by }); return; }
       A.alive[v] = false; A.kills++; A.last = t;
-      emit({ t: 'kill', by, v, w, x: +s.x.toFixed(2), z: +s.z.toFixed(2) });
+      emit({ t: 'kill', by, v, w, x: +s.x.toFixed(2), z: +s.z.toFixed(2), f: s.f });
       // bots who saw it now know who the murderer is
       for (const b of G.slots) {
-        if (b.ai && A.alive[b.i] && b.i !== by && dist(b, k) < 20 && TR.los(b.x, b.z, k.x, k.z)) { b.ai.known = true; b.ai.sus = by; }
+        if (b.ai && A.alive[b.i] && b.i !== by && dist(b, k) < 20 && TR.see(b, k)) { b.ai.known = true; b.ai.sus = by; }
       }
       checkWin();
       return;
     }
     if (r.t === 'acc') {
       const v = r.v;
-      if (by === G.m || !G.slots[v] || !A.alive[v] || v === by || A.done[by].size < NTASK || !TR.inMeeting(k.x, k.z, 0.8)) return;
+      if (by === G.m || !G.slots[v] || !A.alive[v] || v === by || A.done[by].size < NTASK || !TR.inMeeting(k.x, k.z, k.f, 0.8)) return;
       if (v === G.m) { A.over = true; emit({ t: 'acc', by, v, ok: 1 }); emit({ t: 'win', w: 'i', by }); return; }
       // wrong! the innocent you accused is out, and so are you
       A.alive[v] = false; A.alive[by] = false;
@@ -465,10 +616,10 @@
     const me = G.slots[G.me];
     if (ev.t === 'kill') {
       const v = G.slots[ev.v], k = G.slots[ev.by];
-      v.alive = false; v.x = v.tx = ev.x; v.z = v.tz = ev.z; v.w = 0; v.hide = -1;
+      v.alive = false; v.x = v.tx = ev.x; v.z = v.tz = ev.z; v.f = ev.f || 0; v.w = 0; v.hide = -1;
       if (ev.v === G.me) $('hiding').hidden = true;
       k.kills++;
-      G.bodies.push({ slot: ev.v, x: ev.x, z: ev.z });
+      G.bodies.push({ slot: ev.v, x: ev.x, z: ev.z, f: ev.f || 0 });
       layBody(v);
       if (ev.w === 2) bangHeard(ev.by); else if (dist(me, v) < 12) SFX.stab();
       if (ev.v === G.me) {
@@ -488,8 +639,8 @@
       else {
         const outs = [ev.v].concat(ev.r >= 0 ? [ev.r] : []);
         for (const i of outs) { const s = G.slots[i]; s.alive = false; s.out = true; s.w = 0; s.mesh.visible = false; }
-        msg(`☝ ${tag(ev.by)} accused ${tag(ev.v)}, but ${cname(ev.v)} was innocent! ${outs.map(tag).join(' and ')} ${outs.length > 1 ? 'are' : 'is'} off the train!`);
-        if (outs.includes(G.me)) big('🚪 You\'re out!', ev.v === G.me ? `${cname(ev.by)} accused you, but you were innocent!` : `${cname(ev.v)} was innocent, so you're off the train too!`, 5);
+        msg(`☝ ${tag(ev.by)} accused ${tag(ev.v)}, but ${cname(ev.v)} was innocent! ${outs.map(tag).join(' and ')} ${outs.length > 1 ? 'are' : 'is'} ${TR.name === 'train' ? 'off the train' : 'out of the game'}!`);
+        if (outs.includes(G.me)) big('🚪 You\'re out!', ev.v === G.me ? `${cname(ev.by)} accused you, but you were innocent!` : `${cname(ev.v)} was innocent, so you're out too!`, 5);
       }
     } else if (ev.t === 'win') {
       G.over = true;
@@ -500,12 +651,13 @@
   function bangHeard(by) {
     const k = G.slots[by], me = G.slots[G.me];
     SFX.bang(Math.max(0.35, 1 - dist(me, k) / 80));
-    msg(`💥 BANG! A shotgun went off in <b>${TR.carAt(k.x).name}</b>!`);
+    const z = TR.zoneName(k.x, k.z, k.f);
+    msg(`💥 BANG! A shotgun went off in <b>${/^(the |Rooms )/.test(z) ? z : 'the ' + z}</b>!`);
   }
   function layBody(s) {
     const m = s.mesh;
     m.visible = true;
-    m.position.set(s.x, 0, s.z);
+    m.position.set(s.x, TR.yAt(s.x, s.z, s.f), s.z);
     m.userData.body.rotation.x = -Math.PI / 2;
     m.userData.body.position.y = 0.25;
     m.userData.pool.visible = true;
@@ -535,10 +687,10 @@
       think: rand(0, 0.2), stuckT: 0, lx: s.x, lz: s.z, until: 0,
     };
   }
-  function goTo(s, x, z) { s.ai.path = TR.findPath(s.x, s.z, x, z); s.ai.goal = [x, z]; s.ai.stuckT = 0; }
-  function sees(s, o, r) { return !(o.hide >= 0) && dist(s, o) < r && TR.los(s.x, s.z, o.x, o.z); }
+  function goTo(s, x, z, f) { s.ai.path = TR.findPath(s.x, s.z, s.f, x, z, f); s.ai.goal = [x, z, f]; s.ai.stuckT = 0; }
+  function sees(s, o, r) { return !(o.hide >= 0) && dist(s, o) < r && TR.see(s, o); }
   const spotFree = (id) => !G.slots.some((o) => o.hide === id && o.alive);
-  function botHide(s, id) { const h = TR.HIDES[id]; s.x = h.ex; s.z = h.ez; s.hide = id; s.ai.path = []; s.w = 0; }
+  function botHide(s, id) { const h = TR.HIDES[id]; s.x = h.ex; s.z = h.ez; s.f = h.f; s.hide = id; s.ai.path = []; s.w = 0; }
 
   function updateBot(s, dt, t) {
     const ai = s.ai;
@@ -548,11 +700,11 @@
     const [gx, gz] = ai.path[0];
     const dx = gx - s.x, dz = gz - s.z, d = Math.hypot(dx, dz);
     if (d < 0.12) { ai.path.shift(); return; }
-    const st = Math.min(d, BOT_SPEED * dt);
+    const st = Math.min(d, (ai.mode === 'hunt' ? BOT_SPEED * 1.2 : BOT_SPEED) * dt); // the murderer hurries when hunting
     TR.move(s, dx / d * st, dz / d * st);
     s.a = Math.atan2(-dx, -dz);
     // stuck? try again
-    if (Math.hypot(s.x - ai.lx, s.z - ai.lz) < 0.02) { ai.stuckT += dt; if (ai.stuckT > 1.2 && ai.goal) { TR.move(s, rand(-0.2, 0.2), rand(-0.2, 0.2)); goTo(s, ai.goal[0], ai.goal[1]); } }
+    if (Math.hypot(s.x - ai.lx, s.z - ai.lz) < 0.02) { ai.stuckT += dt; if (ai.stuckT > 1.2 && ai.goal) { TR.move(s, rand(-0.2, 0.2), rand(-0.2, 0.2)); goTo(s, ai.goal[0], ai.goal[1], ai.goal[2]); } }
     else ai.stuckT = 0;
     ai.lx = s.x; ai.lz = s.z;
   }
@@ -564,20 +716,20 @@
     ai.wait = 0;
     const near = TR.NODES.filter((n) => Math.abs(n.x - s.x) < 30);
     const n = pick(near.length ? near : TR.NODES);
-    goTo(s, n.x, n.z);
+    goTo(s, n.x, n.z, n.f);
   }
 
   function thinkInnocent(s, t) {
     const ai = s.ai, M = G.slots[G.m], mAlive = A.alive[G.m];
     if (s.hide >= 0) { // hiding: stay in until it feels safe
-      if (t > ai.until && !(mAlive && M.hide < 0 && dist(s, M) < 6 && TR.los(s.x, s.z, M.x, M.z))) { s.hide = -1; ai.mode = ''; }
+      if (t > ai.until && !(mAlive && M.hide < 0 && dist(s, M) < 6 && TR.see(s, M))) { s.hide = -1; ai.mode = ''; }
       return;
     }
     if (ai.mode === 'hide') { // on the way to a hiding place
       const h = TR.HIDES[ai.spot];
       if (!spotFree(ai.spot)) ai.mode = '';
-      else if (Math.hypot(s.x - h.ex, s.z - h.ez) < 0.5) { botHide(s, ai.spot); ai.until = t + rand(8, 16); return; }
-      else { if (!ai.path.length) goTo(s, h.ex, h.ez); return; }
+      else if (s.f === h.f && Math.hypot(s.x - h.ex, s.z - h.ez) < 0.5) { botHide(s, ai.spot); ai.until = t + rand(8, 16); return; }
+      else { if (!ai.path.length) goTo(s, h.ex, h.ez, h.f); return; }
     }
     if (mAlive && M.w > 0 && sees(s, M, 18)) { ai.known = true; ai.sus = G.m; }
     for (const b of G.bodies) {
@@ -602,23 +754,25 @@
       if (others.length && Math.random() < 0.35) { ai.sus = pick(others).i; ai.susT = t - 6; }
     }
     // the murderer is close: run!
-    if (ai.known && mAlive && sees(s, M, 7) && !(done && TR.inMeeting(s.x, s.z))) {
+    if (ai.known && mAlive && sees(s, M, 7) && !(done && TR.inMeeting(s.x, s.z, s.f))) {
       if (ai.mode !== 'flee' || t > ai.until || !ai.path.length) {
         ai.mode = 'flee'; ai.until = t + 3; ai.doing = 0;
         // a hiding place close by? jump in!
-        const spot = TR.HIDES.filter((h) => spotFree(h.id) && Math.hypot(h.ex - s.x, h.ez - s.z) < 7 && Math.hypot(h.ex - M.x, h.ez - M.z) > Math.hypot(h.ex - s.x, h.ez - s.z))[0];
-        if (spot && Math.random() < 0.6) { ai.mode = 'hide'; ai.spot = spot.id; goTo(s, spot.ex, spot.ez); return; }
-        const far = TR.SPAWNS.filter((n) => Math.abs(n.x - M.x) > 15 && Math.sign(n.x - s.x) === Math.sign(s.x - M.x || 1));
+        const spot = TR.HIDES.filter((h) => h.f === s.f && spotFree(h.id) && Math.hypot(h.ex - s.x, h.ez - s.z) < 7 && Math.hypot(h.ex - M.x, h.ez - M.z) > Math.hypot(h.ex - s.x, h.ez - s.z))[0];
+        if (spot && Math.random() < 0.6) { ai.mode = 'hide'; ai.spot = spot.id; goTo(s, spot.ex, spot.ez, spot.f); return; }
+        // run somewhere far from the murderer (and away from them, not past them)
+        const away = (n) => n.f !== M.f ? 30 : Math.hypot(n.x - M.x, n.z - M.z) - Math.hypot(n.x - s.x, n.z - s.z);
+        const far = TR.SPAWNS.filter((n) => away(n) > 8);
         const n = pick(far.length ? far : TR.SPAWNS);
-        goTo(s, n.x, n.z);
+        goTo(s, n.x, n.z, n.f);
       }
       return;
     }
     // tasks done and someone looks guilty: go to the meeting room and accuse them
     if (done && ai.sus >= 0 && (ai.known || t - ai.susT > 6)) {
       ai.mode = 'accuse';
-      if (TR.inMeeting(s.x, s.z)) { handleReq({ t: 'acc', by: s.i, v: ai.sus }); ai.sus = -1; ai.path = []; return; }
-      if (!ai.path.length) goTo(s, TR.MEETING.xc, -0.6);
+      if (TR.inMeeting(s.x, s.z, s.f)) { handleReq({ t: 'acc', by: s.i, v: ai.sus }); ai.sus = -1; ai.path = []; return; }
+      if (!ai.path.length) goTo(s, TR.MEETING.sx, TR.MEETING.sz, TR.MEETING.f);
       return;
     }
     if (!done) {
@@ -628,13 +782,14 @@
       }
       if (ai.task < 0 || A.done[s.i].has(ai.task) || ai.mode !== 'task') {
         const left = s.tasks.filter((id) => !A.done[s.i].has(id)).map((id) => TR.TASKS[id]);
-        left.sort((p, q) => Math.abs(p.sx - s.x) - Math.abs(q.sx - s.x));
+        const far = (p) => Math.abs(p.sx - s.x) + Math.abs(p.sz - s.z) + (p.f !== s.f ? 20 : 0);
+        left.sort((p, q) => far(p) - far(q));
         ai.task = left[0].id; ai.mode = 'task';
-        goTo(s, left[0].sx, left[0].sz);
+        goTo(s, left[0].sx, left[0].sz, left[0].f);
       }
       const tk = TR.TASKS[ai.task];
-      if (Math.hypot(s.x - tk.sx, s.z - tk.sz) < 0.35) { ai.doing = t + TASK_TIME + rand(0, 1.5); ai.path = []; s.a = faceTo(s, tk.ox, tk.oz); }
-      else if (!ai.path.length) goTo(s, tk.sx, tk.sz);
+      if (s.f === tk.f && Math.hypot(s.x - tk.sx, s.z - tk.sz) < 0.35) { ai.doing = t + TASK_TIME + rand(0, 1.5); ai.path = []; s.a = faceTo(s, tk.ox, tk.oz); }
+      else if (!ai.path.length) goTo(s, tk.sx, tk.sz, tk.f);
       return;
     }
     if (ai.mode !== 'wander') { ai.mode = 'wander'; ai.path = []; }
@@ -645,15 +800,15 @@
     const ai = s.ai;
     if (ai.hideAt && t > ai.hideAt) { s.w = 0; ai.hideAt = 0; }
     const others = (a, b) => G.slots.filter((o) => o.i !== a && o.i !== b && A.alive[o.i]);
-    const witnesses = (v) => others(s.i, v).filter((o) => sees(o, s, 22)).length;
+    const witnesses = (v) => others(s.i, v).filter((o) => sees(o, s, 16)).length;
     if (t < ai.cool) {
       if (!ai.hideAt) s.w = 0;
       // pretend to do tasks
       if (ai.doing) { if (t > ai.doing) ai.doing = 0; return; }
       if (ai.mode !== 'fake' || !ai.path.length) {
-        if (ai.mode === 'fake' && ai.task >= 0) { const tk = TR.TASKS[ai.task]; if (Math.hypot(s.x - tk.sx, s.z - tk.sz) < 0.5) { ai.doing = t + rand(2, 4); s.a = faceTo(s, tk.ox, tk.oz); ai.task = -1; return; } }
+        if (ai.mode === 'fake' && ai.task >= 0) { const tk = TR.TASKS[ai.task]; if (s.f === tk.f && Math.hypot(s.x - tk.sx, s.z - tk.sz) < 0.5) { ai.doing = t + rand(2, 4); s.a = faceTo(s, tk.ox, tk.oz); ai.task = -1; return; } }
         ai.mode = 'fake'; ai.task = pick(s.tasks);
-        const tk = TR.TASKS[ai.task]; goTo(s, tk.sx, tk.sz);
+        const tk = TR.TASKS[ai.task]; goTo(s, tk.sx, tk.sz, tk.f);
       }
       return;
     }
@@ -670,40 +825,42 @@
       for (const o of others(s.i, -1)) {
         const d = dist(s, o);
         if (o.hide >= 0) continue; // can't find people who are hiding
-        if (!tracker && d > 9 && !sees(s, o, 16)) continue;
+        if (!tracker && (d > 9 || o.f !== s.f) && !sees(s, o, 16)) continue;
         const sc = d + others(s.i, o.i).filter((q) => sees(q, o, 14)).length * 15;
         if (sc < score) { score = sc; best = o.i; }
       }
       ai.target = best; ai.targetT = t + 20;
     }
     if (ai.target < 0) { if (!ai.hideAt) s.w = 0; ai.mode = 'wander'; wander(s, t); return; }
+    if (ai.mode !== 'hunt') ai.huntT = t;
     ai.mode = 'hunt';
-    const v = G.slots[ai.target], d = dist(s, v), see = TR.los(s.x, s.z, v.x, v.z);
-    const wit = witnesses(ai.target);
+    const v = G.slots[ai.target], d = dist(s, v), see = TR.see(s, v);
+    // hunting for a long time with no luck? take the risk, even if someone might see
+    const wit = t - ai.huntT > 30 ? 0 : witnesses(ai.target);
     if (ai.spot != null && ai.spot >= 0) { // go stab the hiding place
       const h = TR.HIDES[ai.spot];
-      if (Math.hypot(s.x - h.x, s.z - h.z) < 1.5 && wit === 0) {
+      if (s.f === h.f && Math.hypot(s.x - h.x, s.z - h.z) < 1.5 && wit === 0) {
         ai.path = []; s.a = faceTo(s, h.x, h.z);
         if (s.w !== 1) { s.w = 1; ai.drawT = t; ai.hideAt = 0; }
         else if (t - ai.drawT > 0.35) { handleReq({ t: 'kill', by: s.i, v: ai.target, w: 1 }); ai.cool = t + rand(10, 18); ai.hideAt = t + 0.9; ai.target = -1; ai.spot = null; }
         return;
       }
-      if (t > ai.repath || !ai.path.length) { goTo(s, h.ex, h.ez); ai.repath = t + 0.7; }
+      if (t > ai.repath || !ai.path.length) { goTo(s, h.ex, h.ez, h.f); ai.repath = t + 0.7; }
       return;
     }
     const want = A.kills >= 2 && d > 2.2 ? 2 : 1;
-    const range = want === 2 ? 9 : 1.6;
+    const range = want === 2 ? 9 : 2.0;
     if (wit === 0 && see && d < range) {
       ai.path = []; s.a = faceTo(s, v.x, v.z);
       if (s.w !== want) { s.w = want; ai.drawT = t; ai.hideAt = 0; }
-      else if (t - ai.drawT > 0.35) {
+      else if (t - ai.drawT > 0.2) {
         handleReq({ t: 'kill', by: s.i, v: ai.target, w: want });
         ai.cool = t + rand(10, 18); ai.hideAt = t + 0.9; ai.target = -1; ai.mode = '';
       }
       return;
     }
     if (wit > 0 && !ai.hideAt) s.w = 0;
-    if (t > ai.repath || !ai.path.length) { goTo(s, v.x, v.z); ai.repath = t + 0.7; }
+    if (t > ai.repath || !ai.path.length) { goTo(s, v.x, v.z, v.f); ai.repath = t + 0.7; }
   }
 
   // =====================================================================
@@ -785,7 +942,7 @@
       if (d > range) continue;
       const diff = angDiff(faceTo(s, o.x, o.z), s.a);
       if (diff > Math.max(maxAng, Math.atan(0.35 / Math.max(d, 0.1)))) continue;
-      if (needSight && !TR.los(s.x, s.z, o.x, o.z)) continue;
+      if (o.f !== s.f || (needSight && !TR.see(s, o))) continue;
       if (diff * d < bd) { bd = diff * d; best = o.i; }
     }
     return best;
@@ -818,6 +975,7 @@
   function spotInFront() {
     const s = G.slots[G.me];
     for (const h of TR.HIDES) {
+      if (h.f !== s.f) continue;
       const d = Math.hypot(s.x - h.x, s.z - h.z);
       if (d < 1.6 && angDiff(faceTo(s, h.x, h.z), s.a) < 0.9) return h;
     }
@@ -825,7 +983,7 @@
   }
   function nearSpot() {
     const s = G.slots[G.me];
-    for (const h of TR.HIDES) if (Math.hypot(s.x - h.ex, s.z - h.ez) < 0.9 || Math.hypot(s.x - h.x, s.z - h.z) < 1.1) return h;
+    for (const h of TR.HIDES) if (h.f === s.f && (Math.hypot(s.x - h.ex, s.z - h.ez) < 0.9 || Math.hypot(s.x - h.x, s.z - h.z) < 1.1)) return h;
     return null;
   }
   function toggleHide() {
@@ -847,7 +1005,7 @@
     const s = G.slots[G.me];
     if (!s.alive || s.hide >= 0) return;
     if (G.myDone.size < NTASK) { msg(`Finish all your tasks first! (${G.myDone.size}/${NTASK})`); return; }
-    if (!TR.inMeeting(s.x, s.z)) { msg('Go to <b>room 25, the meeting room</b>, to accuse someone.'); return; }
+    if (!TR.inMeeting(s.x, s.z, s.f)) { msg(`Go to <b>${TR.MEETING_NAME}</b> to accuse someone.`); return; }
     if (document.pointerLockElement) document.exitPointerLock();
     const box = $('pick-btns'); box.innerHTML = '';
     for (const o of G.slots) {
@@ -901,14 +1059,16 @@
     const dx = (-Math.sin(s.a) * f + Math.cos(s.a) * r) * sp, dz = (-Math.cos(s.a) * f - Math.sin(s.a) * r) * sp;
     if (s.alive && !G.over && s.hide < 0) TR.move(s, dx, dz);
     else if (!s.alive) { // ghosts float through walls
-      s.x = Math.max(-1, Math.min(TR.LENGTH + 1, s.x + dx));
-      s.z = Math.max(-1.9, Math.min(1.9, s.z + dz));
+      const B = TR.BOUNDS;
+      s.x = Math.max(B.x0 + 0.1, Math.min(B.x1 - 0.1, s.x + dx));
+      s.z = Math.max(B.z0 + 0.1, Math.min(B.z1 - 0.1, s.z + dz));
+      TR.updateFloor(s);
     }
     const moving = len > 0.1 && s.alive;
     G.bob = (G.bob || 0) + (moving ? dt * 9 : 0);
     const sway = Math.sin(t * 1.7) * 0.004;
-    camera.position.set(s.x, (s.alive ? EYE : 1.9) + Math.sin(G.bob) * 0.04, s.z);
-    if (s.hide >= 0) { const h = TR.HIDES[s.hide]; camera.position.set(h.x + (h.ex - h.x) * 0.55, EYE, h.z + (h.ez - h.z) * 0.55); }
+    camera.position.set(s.x, TR.yAt(s.x, s.z, s.f) + (s.alive ? EYE : 1.9) + Math.sin(G.bob) * 0.04, s.z);
+    if (s.hide >= 0) { const h = TR.HIDES[s.hide]; camera.position.set(h.x + (h.ex - h.x) * 0.55, h.f * TR.FH + EYE, h.z + (h.ez - h.z) * 0.55); }
     camera.rotation.set(pitch, s.a, sway);
 
     // tasks
@@ -917,7 +1077,7 @@
       for (const id of s.tasks) {
         if (G.myDone.has(id)) continue;
         const tk = TR.TASKS[id];
-        if (Math.hypot(s.x - tk.ox, s.z - tk.oz) < REACH || Math.hypot(s.x - tk.sx, s.z - tk.sz) < 0.6) { G.near = id; break; }
+        if (tk.f === s.f && Math.hypot(s.x - tk.ox, s.z - tk.oz) < REACH || Math.hypot(s.x - tk.sx, s.z - tk.sz) < 0.6) { G.near = id; break; }
       }
     }
     if (G.near >= 0 && (keys.KeyE || touchTask)) {
@@ -926,7 +1086,7 @@
         G.myDone.add(G.near); G.hold = 0; SFX.ding();
         request({ t: 'task', by: G.me, id: G.near });
         const m = markers.find((m) => m.id === G.near); if (m) { scene.remove(m.ring, m.gem); }
-        if (G.me !== G.m && G.myDone.size === NTASK) { msg('✅ All tasks done! Go to <b>room 25, the meeting room</b>, to accuse someone.'); SFX.yay(); }
+        if (G.me !== G.m && G.myDone.size === NTASK) { msg(`✅ All tasks done! Go to <b>${TR.MEETING_NAME}</b> to accuse someone.`); SFX.yay(); }
       }
     } else G.hold = 0;
 
@@ -934,9 +1094,9 @@
     if (s.alive) {
       for (const b of G.bodies) {
         if (G.seenBodies.has(b.slot) || b.slot === G.me) continue;
-        if (Math.hypot(s.x - b.x, s.z - b.z) < 9 && TR.los(s.x, s.z, b.x, b.z)) {
+        if (Math.hypot(s.x - b.x, s.z - b.z) < 9 && TR.see(s, b)) {
           G.seenBodies.add(b.slot);
-          if (G.slots[b.slot] && G.me !== G.m) { msg(`😱 You found ${tag(b.slot)}'s body in ${TR.placeName(b.x, b.z)}!`); SFX.gasp(); }
+          if (G.slots[b.slot] && G.me !== G.m) { msg(`😱 You found ${tag(b.slot)}'s body in ${TR.placeName(b.x, b.z, b.f)}!`); SFX.gasp(); }
         }
       }
     }
@@ -955,7 +1115,7 @@
       if (s.out) { m.visible = false; continue; }
       if (!s.alive) continue; // bodies stay where they fell
       m.visible = s.i !== G.me && !(s.hide >= 0);
-      m.position.set(s.x, 0, s.z);
+      m.position.set(s.x, TR.yAt(s.x, s.z, s.f), s.z);
       m.rotation.y = s.a;
       const mv = Math.hypot(s.x - (s.px ?? s.x), s.z - (s.pz ?? s.z)) > 0.004;
       s.px = s.x; s.pz = s.z;
@@ -965,7 +1125,8 @@
     }
     for (const mk of markers) {
       mk.gem.rotation.y = t * 2;
-      mk.gem.position.y = Math.min(TR.TASKS[mk.id].oy + 0.6, 2.5) + Math.sin(t * 3) * 0.06;
+      const tk = TR.TASKS[mk.id];
+      mk.gem.position.y = tk.f * TR.FH + Math.min(tk.oy + 0.6, 2.5) + Math.sin(t * 3) * 0.06;
       mk.ring.material.opacity = 0.5 + Math.sin(t * 4) * 0.3;
     }
   }
@@ -990,7 +1151,7 @@
     const s = G.slots[G.me];
     if (t > bigUntil) $('big').innerHTML = '';
     $('click').hidden = isTouch || !!document.pointerLockElement || G.over || !$('pick').hidden;
-    $('where').textContent = '📍 ' + TR.placeName(s.x, s.z);
+    $('where').textContent = '📍 ' + TR.placeName(s.x, s.z, s.f);
     // role box
     let role;
     if (G.me === G.m) {
@@ -998,8 +1159,8 @@
       role = `<b>🔪 Murderer</b><br>Kills: ${s.kills}<br>` +
         (wait > 0 ? `Weapon ready in ${Math.ceil(wait)}...` : `In hand: ${['nothing (click to attack)', '🔪 Dagger', '🔫 Shotgun'][s.w]}`) +
         `<br><small>${s.kills < 2 ? `🔫 Shotgun after ${2 - s.kills} more` : s.kills < 4 ? `📡 Tracker after ${4 - s.kills} more` : '📡 Tracker on!'}</small>`;
-    } else role = `<b>🙂 Innocent</b><br>Tasks: ${G.myDone.size}/${NTASK}<br><small>${G.myDone.size < NTASK ? 'Then go to room 25 to accuse' : 'Go to room 25 and press F to accuse!'}</small>`;
-    if (!s.alive) role = s.out ? '<b>🚪 Out</b><br>You\'re off the train. Watch the rest!' : '<b>👻 Ghost</b><br>You were killed. Watch the rest!';
+    } else role = `<b>🙂 Innocent</b><br>Tasks: ${G.myDone.size}/${NTASK}<br><small>${G.myDone.size < NTASK ? `Then go to ${TR.MEETING_SHORT} to accuse` : `Go to ${TR.MEETING_SHORT} and press F to accuse!`}</small>`;
+    if (!s.alive) role = s.out ? `<b>🚪 Out</b><br>You're ${TR.name === 'train' ? 'off the train' : 'out'}. Watch the rest!` : '<b>👻 Ghost</b><br>You were killed. Watch the rest!';
     if ($('role').innerHTML !== role) $('role').innerHTML = role;
     // task list
     const th = `<h3>${G.me === G.m ? 'Fake tasks (to look innocent)' : 'Your tasks'}</h3><ul>` +
@@ -1018,7 +1179,7 @@
       } else if (G.me === G.m && s.hide < 0 && spotInFront() && !(G.near >= 0)) {
         p = `${isTouch ? '💥' : 'Click'}: stab the ${spotInFront().kind}` + (nearSpot() ? ` · ${isTouch ? '🚪' : 'H'}: hide` : '');
       }
-      if (G.me !== G.m && TR.inMeeting(s.x, s.z)) p = G.myDone.size >= NTASK ? `${isTouch ? '☝ Accuse' : 'Press F'} to accuse someone!` : `Finish your tasks to accuse (${G.myDone.size}/${NTASK})`;
+      if (G.me !== G.m && TR.inMeeting(s.x, s.z, s.f)) p = G.myDone.size >= NTASK ? `${isTouch ? '☝ Accuse' : 'Press F'} to accuse someone!` : `Finish your tasks to accuse (${G.myDone.size}/${NTASK})`;
     }
     $('prompt').hidden = !p; if (p) $('prompt').textContent = p;
     $('bar').hidden = !(G.hold > 0);
@@ -1032,32 +1193,39 @@
     const g = c.getContext('2d');
     g.setTransform(2, 0, 0, 2, 0, 0);
     g.clearRect(0, 0, W, H);
-    const pad = 6, sx = (W - pad * 2) / TR.LENGTH, top = 10, hh = H - 16;
-    const X = (x) => pad + x * sx, Z = (z) => top + (z + TR.CW) / (TR.CW * 2) * hh;
+    // one panel per floor, side by side
+    const B = TR.BOUNDS, nf = TR.floors, pad = 6, top = 10, hh = H - 16;
+    const pw = (W - pad * (nf + 1)) / nf;
+    const X = (x, f = 0) => pad + f * (pw + pad) + (x - B.x0) / (B.x1 - B.x0) * pw;
+    const Z = (z) => top + (z - B.z0) / (B.z1 - B.z0) * hh;
+    const SX = pw / (B.x1 - B.x0), SZ = hh / (B.z1 - B.z0);
     g.font = '600 9px Fredoka, sans-serif'; g.textAlign = 'center';
-    for (const car of TR.CARS) {
-      g.fillStyle = car.kind === 'loco' ? '#3a4a3a' : car.kind === 'cab' ? '#7a3a2a' : '#5a3a3a';
-      g.fillRect(X(car.x0), top, (car.x1 - car.x0) * sx, hh);
-      g.fillStyle = '#ffffffaa';
-      g.fillText(car.kind === 'pass' ? car.name.replace('Rooms ', '') : car.kind === 'loco' ? '🚂' : 'Caboose', X((car.x0 + car.x1) / 2), 8);
-    }
     const mr = TR.MEETING;
-    g.fillStyle = '#c0304088'; g.fillRect(X(mr.a), Z(-TR.CW), (mr.b - mr.a) * sx, Z(TR.CORR) - Z(-TR.CW));
+    for (const r of TR.MAP) {
+      g.fillStyle = r.color;
+      g.fillRect(X(r.x0, r.f), Z(r.z0), (r.x1 - r.x0) * SX, (r.z1 - r.z0) * SZ);
+      if (nf === 1) { g.fillStyle = '#ffffffaa'; g.fillText(r.label, X((r.x0 + r.x1) / 2, r.f), 8); }
+    }
+    g.fillStyle = '#c0304088'; g.fillRect(X(mr.x0, mr.f), Z(mr.z0), (mr.x1 - mr.x0) * SX, (mr.z1 - mr.z0) * SZ);
+    if (nf > 1) {
+      for (const r of TR.MAP) if (r.label) { g.fillStyle = '#ffffffcc'; g.fillText(r.z0 > B.z0 ? r.label : '', X((r.x0 + r.x1) / 2, r.f), Z((r.z0 + r.z1) / 2) + 3); }
+      for (let f = 0; f < nf; f++) { g.fillStyle = '#ffd86b'; g.fillText(f ? '⬆ Upstairs' : 'Downstairs', X((B.x0 + B.x1) / 2, f), 8); }
+    }
     const s = G.slots[G.me];
     for (const id of s.tasks) {
       if (G.myDone.has(id)) continue;
-      const tk = TR.TASKS[id]; g.fillStyle = '#ffd23d'; g.fillRect(X(tk.sx) - 2.5, Z(tk.sz) - 2.5, 5, 5);
+      const tk = TR.TASKS[id]; g.fillStyle = '#ffd23d'; g.fillRect(X(tk.sx, tk.f) - 2.5, Z(tk.sz) - 2.5, 5, 5);
     }
     const all = !s.alive || (G.me === G.m && s.kills >= 4);
     for (const o of G.slots) {
       if (o.out || o.i === G.me || (o.alive && o.hide >= 0)) continue;
-      if (!o.alive && (G.seenBodies.has(o.i) || all)) { g.fillStyle = '#fff'; g.fillText('✖', X(o.x), Z(o.z) + 3); continue; }
+      if (!o.alive && (G.seenBodies.has(o.i) || all)) { g.fillStyle = '#fff'; g.fillText('✖', X(o.x, o.f), Z(o.z) + 3); continue; }
       if (!o.alive || !all) continue;
       g.fillStyle = COLORS[o.c].h; g.strokeStyle = '#000'; g.lineWidth = 1;
-      g.beginPath(); g.arc(X(o.x), Z(o.z), 3.2, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.beginPath(); g.arc(X(o.x, o.f), Z(o.z), 3.2, 0, Math.PI * 2); g.fill(); g.stroke();
     }
     g.fillStyle = COLORS[s.c].h; g.strokeStyle = '#fff'; g.lineWidth = 2;
-    g.beginPath(); g.arc(X(s.x), Z(s.z), 4.2 + Math.sin(t * 6) * 0.6, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.beginPath(); g.arc(X(s.x, s.f), Z(s.z), 4.2 + Math.sin(t * 6) * 0.6, 0, Math.PI * 2); g.fill(); g.stroke();
   }
 
   // =====================================================================
@@ -1065,7 +1233,7 @@
   // =====================================================================
   // Rooms live at murdermight/rooms/<CODE>. Only game things are sent: colours, positions, task ticks,
   // kills and accusations. No names or chat. The host is the referee and runs the bots.
-  const VERSION = 1;
+  const VERSION = 2;
   const ROOMS = 'murdermight/rooms';
   const NO_SERVER = "Can't reach the game server. Check the internet connection.";
   const db = window.firebase ? (firebase.initializeApp({
@@ -1096,7 +1264,7 @@
       for (let i = 0; i < 6; i++) {
         const code = genCode(), ref = db.ref(`${ROOMS}/${code}`);
         const res = await ref.transaction((cur) => (cur ? undefined : {
-          host: myId, v: VERSION, created: firebase.database.ServerValue.TIMESTAMP, phase: 'lobby', fill: 8, players: { [myId]: { c: myColor } },
+          host: myId, v: VERSION, created: firebase.database.ServerValue.TIMESTAMP, phase: 'lobby', fill: 8, map: $('mapsel').value, players: { [myId]: { c: myColor } },
         }));
         if (res.committed) { ref.onDisconnect().remove(); enterRoom(code, ref, true); return; }
       }
@@ -1125,7 +1293,7 @@
   }
 
   function enterRoom(code, ref, isHost) {
-    room = { code, ref, isHost, players: {}, fill: 8, gameId: null, offs: [] };
+    room = { code, ref, isHost, players: {}, fill: 8, map: 'train', gameId: null, offs: [] };
     const on = (r, evt, fn) => { r.on(evt, fn); room.offs.push(() => r.off(evt, fn)); };
     $('code').textContent = code;
     showScreen('lobby');
@@ -1138,6 +1306,7 @@
       drawLobby();
     });
     on(ref.child('fill'), 'value', (snap) => { room.fill = snap.val() || 8; drawLobby(); });
+    on(ref.child('map'), 'value', (snap) => { room.map = MAPS[snap.val()] ? snap.val() : 'train'; drawLobby(); });
     on(ref.child('phase'), 'value', (snap) => {
       if (snap.val() === 'lobby' && G) { stopGame(); showScreen('lobby'); drawLobby(); }
     });
@@ -1173,10 +1342,12 @@
     const want = Math.max(min, room.fill);
     const opts = []; for (let n = min; n <= MAXP; n++) opts.push(`<option ${n === want ? 'selected' : ''}>${n}</option>`);
     sel.innerHTML = opts.join(''); sel.disabled = !room.isHost;
+    $('lobby-map').value = room.map; $('lobby-map').disabled = !room.isHost;
     $('lobby-start').hidden = !room.isHost;
     $('lobby-msg').textContent = room.isHost ? `${ids.length} player${ids.length > 1 ? 's' : ''} here. Tell friends the code, then press GO!` : 'Waiting for the host to press GO...';
   }
   $('lobby-fill').onchange = () => { if (room && room.isHost) room.ref.child('fill').set(+$('lobby-fill').value); };
+  $('lobby-map').onchange = () => { if (room && room.isHost) room.ref.child('map').set($('lobby-map').value); };
   $('lobby-start').onclick = () => {
     if (!room || !room.isHost) return;
     const ids = Object.keys(room.players);
@@ -1185,7 +1356,7 @@
     const seen = new Set();
     for (const h of humans) { if (seen.has(h.c)) h.c = COLORS.findIndex((_, i) => !seen.has(i) && !humans.some((q) => q.c === i)); seen.add(h.c); }
     const total = Math.max(3, humans.length, room.fill);
-    const def = makeDef(humans, total, 0);
+    const def = makeDef(room.map, humans, total, 0);
     def.m = Math.floor(Math.random() * def.slots.length);
     room.ref.update({ phase: 'play', ev: null, req: null, pos: null, game: def });
   };
@@ -1199,7 +1370,7 @@
       if (!G) return;
       const s = G.slots[+snap.key], p = snap.val();
       if (!s || s.i === G.me || s.ai || !p) return;
-      s.tx = p.x; s.tz = p.z; s.ta = p.a; s.w = p.w || 0; s.hide = p.h == null ? -1 : p.h;
+      s.tx = p.x; s.tz = p.z; s.ta = p.a; s.w = p.w || 0; s.hide = p.h == null ? -1 : p.h; s.f = p.f || 0;
       if (s.hide >= 0) { s.x = s.tx; s.z = s.tz; }
     };
     on(ref.child('pos'), 'child_added', posFn);
@@ -1212,7 +1383,7 @@
     if (t - G.lastSend < 0.1) return;
     G.lastSend = t;
     const up = {};
-    const put = (s) => { up[s.i] = { x: +s.x.toFixed(2), z: +s.z.toFixed(2), a: +s.a.toFixed(2), w: s.w, h: s.hide }; };
+    const put = (s) => { up[s.i] = { x: +s.x.toFixed(2), z: +s.z.toFixed(2), a: +s.a.toFixed(2), w: s.w, h: s.hide, f: s.f }; };
     put(G.slots[G.me]);
     if (G.host) for (const s of G.slots) if (s.ai) put(s);
     room.ref.child('pos').update(up);
@@ -1241,7 +1412,7 @@
   for (const b of $('who').children) b.onclick = () => { who = b.dataset.v; for (const x of $('who').children) x.setAttribute('aria-pressed', String(x === b)); };
   function soloGame() {
     const n = +$('count').value;
-    const def = makeDef([{ c: myColor, o: 'me' }], n, 0);
+    const def = makeDef($('mapsel').value, [{ c: myColor, o: 'me' }], n, 0);
     def.m = who === 'm' ? 0 : who === 'i' ? 1 + Math.floor(Math.random() * (n - 1)) : Math.floor(Math.random() * n);
     startGame(def, false);
   }
@@ -1267,10 +1438,18 @@
   $('quit').onclick = toMenu;
 
   // camera for the menu background
-  buildTrain();
+  // build both maps, each in its own group; only the one being played is shown
+  const mapGroups = {};
+  for (const name of Object.keys(MAPS)) {
+    build = mapGroups[name] = new THREE.Group(); scene.add(build);
+    if (name === 'train') drawTrain(MAPS[name]); else drawMansion(MAPS[name]);
+  }
+  build = scene;
+  function showMap(name) { for (const k in mapGroups) mapGroups[k].visible = k === name; $('hud').classList.toggle('tall', MAPS[name].floors > 1); }
+  showMap('train');
   camera.position.set(70, 1.55, 1.25); camera.rotation.set(0, -Math.PI / 2, 0);
   requestAnimationFrame(frame);
 
   // for testing
-  window.MM = { get G() { return G; }, get A() { return A; }, handleReq, TR };
+  window.MM = { get G() { return G; }, get A() { return A; }, handleReq, get TR() { return TR; } };
 })();
